@@ -1,0 +1,56 @@
+class	text	versions	reason
+exact_after_trailing_ws	Arrrrrghhhh! 	SM1+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Zut! Watch it, s'il vous plait. 	SM1+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	$C, you and Doomsday are Theta Wing again. 	SM2	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	$C, you and Paladin are Theta Wing again. 	SM1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	I thought they were evacuating people\nTO Hell's Kitchen, sir, not from it...	WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	well, maybe we can get another hospital ship there in time...	WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	Game Over	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	VID-COM SYSTEM\n\nTo: 	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	Already Visited	SM1+SM2+TRF+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	NONE	SM1+SM2+TRF+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Briefing Nav Map	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	ConFed Nav Scan	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Sector: %s\n	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	System: %s\n\n	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	ANGEL	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	BOSSMAN	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	CAPTAIN	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	CASEY	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	CHEN	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	DEVEREAUX	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	DOOMSDAY	SM2	大小寫／結尾空白：DLL 會忽略，暫不列
+case	HUNTER	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	ICEMAN	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	JAZZ	SM2	大小寫／結尾空白：DLL 會忽略，暫不列
+case	KHUMALO	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	KNIGHT	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	MAJOR	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	MANIAC	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	MARSHALL	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	PALADIN	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	SPIRIT	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	ST.JOHN	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	TAGGART	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	TANAKA	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+case	Neutron gun	SM1+SM2+TRF+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Nav 1 	SM2	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Proceed to Nav 1 	SM1+SM2+WC1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Protect Dilligent-class Transport as it prepares to Warp 	SM1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Return to Tiger's Claw 	SM1+SM15+SM2	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Tiger's Claw 	SM1	大小寫／結尾空白：DLL 會忽略，暫不列
+exact_after_trailing_ws	Tigers's Claw 	SM1+SM2	大小寫／結尾空白：DLL 會忽略，暫不列
+case	xi	SM15	大小寫／結尾空白：DLL 會忽略，暫不列
+nontext	C\nD\nO\nW\n	WC1	純格式碼／亂碼，無可翻譯文字
+nontext	D\nE\nb\nt\n	WC1g	純格式碼／亂碼，無可翻譯文字
+nontext	E\nF\nc\nu\n	WC1	純格式碼／亂碼，無可翻譯文字
+nontext	G\nH\nS\n[\n	WC1g	純格式碼／亂碼，無可翻譯文字
+nontext	G\tH\tS\to\t	SM1	純格式碼／亂碼，無可翻譯文字
+nontext	M\tN\tY\ta\t	SM2	純格式碼／亂碼，無可翻譯文字
+nontext	%X%Y%d. %s%X%s0	SM1+SM2+TRF+WC1	純格式碼／亂碼，無可翻譯文字
+nontext	%X%Y     %s	SM1+SM2+WC1	純格式碼／亂碼，無可翻譯文字
+nontext	%X%Y%d%X%d	SM1+SM2+WC1	純格式碼／亂碼，無可翻譯文字
+nontext	%X%Y%s %s	SM1+SM2+WC1	純格式碼／亂碼，無可翻譯文字
+nontext	%F%s%F	SM1+SM2+TRF+WC1	純格式碼／亂碼，無可翻譯文字
+nontext	* %s *\n	SM1+SM2+WC1	純格式碼／亂碼，無可翻譯文字
+nontext	%X%Y%F%s	SM1+SM2+WC1	純格式碼／亂碼，無可翻譯文字
