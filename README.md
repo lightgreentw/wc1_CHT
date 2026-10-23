@@ -379,7 +379,7 @@ cmake --build build --config Release
 ---
 
 ## License
-詳見 LICENSE ，開發過程使用Anthropic Claude。
+詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file)，開發過程使用Anthropic Claude。
 字型檔不在前述授權範圍內，請依各自的條款使用。
 本專案為非遊戲官方的粉絲專案。
 
