@@ -3,6 +3,8 @@
 # 忽略某個副檔名（例如所有 .log 檔案）
 
 # 忽略整個資料夾（在結尾加上斜線 /）
+.vscode/
+.venv/
 translateDocs/
 packageFiles/
 
