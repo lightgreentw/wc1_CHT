@@ -20,7 +20,7 @@
 ```
 wc1_CHT/
 ├── wc1cht.ini                  設定檔（字型、場景規則等）
-├── wc1zh.txt                   主翻譯表（英文→中文）
+├── wc1zh.trs                   主翻譯表
 │
 ├── src/
 │   ├── wc1cht.cpp              Hook DLL 主程式（Hook1／Hook2／Hook3、翻譯比對、字型繪製、折行）
@@ -34,13 +34,13 @@ wc1_CHT/
 │   ├── CMakeLists.txt          CMake 建置檔（MSVC）
 │   └── build_msys2.sh          MSYS2 MINGW32 建置腳本
 │
-├── chtfonts/                   執行期字型檔
-│   ├── boutique7.fnt           精品點陣體7×7
-│   ├── boutique9.fnt           精品點陣體9×9
-│   ├── nightgazer12b.fnt       夜照飛點陣字型12x12粗體
-│   ├── nightgazer15.fnt        夜照飛點陣字型15x15
-│   ├── 851tegakizatus15.fnt    851手書き雑フォント15x15
-│   └── 851gkktt24.fnt          851電機文字體24x24
+├── BDF/                   點陣字型檔
+│   ├── boutique7.bdf           精品點陣體7×7
+│   ├── boutique9.bdf           精品點陣體9×9
+│   ├── nightgazer12b.bdf       夜照飛點陣字型12x12粗體
+│   ├── nightgazer15.bdf        夜照飛點陣字型15x15
+│   ├── 851tegakizatus15.bdf    851手書き雑フォント15x15
+│   └── 851gkktt24.bdf          851電機文字體24x24
 │
 └── tools/
     ├── bdf_to_czht_fnt.py      BDF 點陣字轉 CZHT .fnt
@@ -325,7 +325,7 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Dakhath | 達卡斯 | the Deathstroke | 絕殺 | 王牌 |
 | Kharang | 卡朗 | | | 空戰通訊中出現 |
 
-### 7. 軍階／頭銜
+### 6. 軍階／頭銜
 | 英文 | 中文 |
 |---|---|
 | Admiral | 上將 |
