@@ -75,7 +75,7 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 
 請依照以下步驟進行中文化：
 - 下載中文化安裝包 https://github.com/lightgreentw/wc1_CHT/releases
-- 解壓縮中文化安裝包，並把所有檔案都放到遊戲資料夾下
+- 解壓縮中文化安裝包，並把所有檔案都放到"遊戲資料夾"下
 - 執行安裝批次檔 
   ```console
   install_wc1cht.bat  
@@ -380,11 +380,7 @@ cmake --build build --config Release
 ---
 
 ## License
-<<<<<<< HEAD
 詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file) ，開發過程使用Anthropic Claude。
-=======
-詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file)，開發過程使用Anthropic Claude。
->>>>>>> 3f84e81c4cc5a8cdb2c371487e2af7481916e37e
 字型檔不在前述授權範圍內，請依各自的條款使用。
 本專案為非遊戲官方的粉絲專案。
 
