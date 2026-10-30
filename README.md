@@ -20,7 +20,7 @@
 ```
 wc1_CHT/
 ├── wc1cht.ini                  設定檔（字型、場景規則等）
-├── wc1zh.txt                   主翻譯表（英文→中文）
+├── wc1zh.trs                   主翻譯表
 │
 ├── src/
 │   ├── wc1cht.cpp              Hook DLL 主程式（Hook1／Hook2／Hook3、翻譯比對、字型繪製、折行）
@@ -34,13 +34,13 @@ wc1_CHT/
 │   ├── CMakeLists.txt          CMake 建置檔（MSVC）
 │   └── build_msys2.sh          MSYS2 MINGW32 建置腳本
 │
-├── chtfonts/                   執行期字型檔
-│   ├── boutique7.fnt           精品點陣體7×7
-│   ├── boutique9.fnt           精品點陣體9×9
-│   ├── nightgazer12b.fnt       夜照飛點陣字型12x12粗體
-│   ├── nightgazer15.fnt        夜照飛點陣字型15x15
-│   ├── 851tegakizatus15.fnt    851手書き雑フォント15x15
-│   └── 851gkktt24.fnt          851電機文字體24x24
+├── BDF/                        點陣字型檔
+│   ├── boutique7.bdf           精品點陣體7×7
+│   ├── boutique9.bdf           精品點陣體9×9
+│   ├── nightgazer12b.bdf       夜照飛點陣字型12x12粗體
+│   ├── nightgazer15.bdf        夜照飛點陣字型15x15
+│   ├── 851tegakizatus15.bdf    851手書き雑フォント15x15
+│   └── 851gkktt24.bdf          851電機文字體24x24
 │
 └── tools/
     ├── bdf_to_czht_fnt.py      BDF 點陣字轉 CZHT .fnt
@@ -54,7 +54,7 @@ wc1_CHT/
 ---
 
 ## 中文化安裝前必要準備事項
-在進行中文化安裝前還有兩件非常重要的事，雖然KS版已經將一代及二代視窗化，但在發行當下光碟並沒有把資料片（祕密任務１和祕密任務２）放入，當時必須到官方的FTP下載，事過境遷現在也只剩Wing Commander CIC這個最大非官方粉絲網站有好好保存相關檔案。還有，畢竟那是支援很久以前的Windows版本，在現代必須進行畫面處理增強，由網友Bekenn開發。所以必須先進行下面兩項資料片補增及強化套件。
+在進行中文化安裝前還有兩件非常重要的事，雖然KS版已經將一代及二代視窗化，但在發行當下光碟並沒有把資料片（祕密任務１和祕密任務２）放入，當時必須到官方的FTP下載，事過境遷現在也只剩 [Wing Commander CIC](https://www.wcnews.com/) 這個最大非官方粉絲網站有好好保存相關檔案。還有，畢竟那是支援很久以前的Windows版本，在現代必須進行畫面處理增強，由網友Bekenn開發。所以必須先進行下面兩項資料片補增及強化套件。
 
 1. 安裝銀河飛將一代的資料片，秘密任務1和秘密任務2
   - https://www.wcnews.com/wcpedia/Secret_Missions_for_the_Kilrathi_Saga
@@ -239,14 +239,14 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Jerusalem | 耶路撒冷號 | 我方 | |
 | Formidable | 嚴陣號 | 我方 | Della Guardia 指揮 |
 | Gwenhyvar | 格溫威華號 | 我方 | 傳說艦名 |
-| Rapier | 銳劍式 | 我方 | 新型戰機 |
+| Hornet | 大黃蜂式 | 我方 | 輕型戰機 |
 | Scimitar | 彎刀式 | 我方 | 中型戰機 |
 | Raptor | 猛禽式 | 我方 | 重型戰機 |
-| Hornet | 大黃蜂式 | 我方 | 輕型戰機 |
-| Dralthi | 爪星式 | 我方 | 輕型戰機 |
+| Rapier | 銳劍式 | 我方 | 新型戰機 |
 | Venture | 曼徹級 | 我方 | 護衛艦級別 |
 | Dilligent | 勤勉級 | 我方 | 救援運輸艦 |
 | Drayman | 德雷曼級 | 我方 | 運輸艦 |
+| Dralthi | 爪星式 | 敵方 | 輕型戰機 |
 | Krant | 鬼焰式 | 敵方 | 中型戰機 |
 | Salthi | 煞星式 | 敵方 | 中型戰機 |
 | Gratha | 格殺式 | 敵方 | 重型戰機 |
@@ -325,7 +325,7 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Dakhath | 達卡斯 | the Deathstroke | 絕殺 | 王牌 |
 | Kharang | 卡朗 | | | 空戰通訊中出現 |
 
-### 7. 軍階／頭銜
+### 6. 軍階／頭銜
 | 英文 | 中文 |
 |---|---|
 | Admiral | 上將 |
@@ -368,6 +368,7 @@ cmake --build build --config Release
 ## Acknowledgements
 - Origin Systems 開發 Wing Commander 並移植 Kilrathi Saga 版本
 - Electronic Arts 發行 Wing Commander: The Kilrathi Saga
+- [Wing Commander CIC](https://www.wcnews.com/) 感謝堅持不懈的粉絲網站
 - [WCDX 專案](https://github.com/Bekenn/wcdx) 在影像的提升備受尊崇，讓 the Kilrathi Saga 版本更有價值
 - [wc1-re 專案](https://github.com/neuromancer/wc1-re) 重建的核心對本專案有參考的依據
 - [精品點陣體9×9](https://github.com/scott0107000/BoutiqueBitmap9x9) 作者:Luke036  
@@ -379,7 +380,11 @@ cmake --build build --config Release
 ---
 
 ## License
+<<<<<<< HEAD
 詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file) ，開發過程使用Anthropic Claude。
+=======
+詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file)，開發過程使用Anthropic Claude。
+>>>>>>> 3f84e81c4cc5a8cdb2c371487e2af7481916e37e
 字型檔不在前述授權範圍內，請依各自的條款使用。
 本專案為非遊戲官方的粉絲專案。
 
