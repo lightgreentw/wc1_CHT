@@ -24,6 +24,9 @@
  *   wc1cht_patch.exe SM2_wcdx.exe          （資料片 2）
  *   wc1cht_patch.exe Transfer_wcdx.exe     （人物傳送工具；更早的 build，位址又完全不同，特徵碼照樣找得到）
  *   （在原檔旁建立 *_cht.exe，原始 exe 完全不動）
+ *   GOG 35th Anniversary 的 WC_*_wcdx_Enhanced.exe 也可直接處理；它們帶 EA 的 Authenticode 簽章，
+ *   輸出檔會自動拿掉簽章（patch 後簽章必然失效）。沒有簽章的舊版 exe 行為不變。
+ *   不想拿掉可加 --keep-signature。
  *
  * === 多版本支援（WC1 / SM1 / SM2 共用同一支 patch 程式）===
  *   三個 exe 的引擎相同，但重新編譯過，函式位址不一樣
@@ -62,6 +65,7 @@ static const DWORD IMAGE_BASE = 0x00400000;
 static const DWORD WC1_VA_HOOK1 = 0x0044E215;
 static const DWORD WC1_VA_HOOK2 = 0x0043AD4E;
 static const DWORD WC1_VA_HOOK3 = 0x0046B85D;      // DrawBigText（開場字幕／製作名單，精靈圖字型）
+static const DWORD WC1_VA_HOOK4 = 0x0045EE4B;      // 精靈繪製核心（圖片替換：進入遊戲前選單的英文按鈕圖）
 
 // Hook 1: DrawFormattedText —— x32dbg 動態驗證過，開頭 6 bytes 已知
 static const BYTE  HOOK1_PROLOGUE[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x04 };
@@ -70,6 +74,9 @@ static const BYTE  HOOK2_PROLOGUE[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x20 };
 
 // Hook 3: DrawBigText(Viewport*, short y, const char* text) —— cdecl，開頭 6 bytes
 static const BYTE  HOOK3_PROLOGUE[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x18 };
+
+// Hook 4: 精靈繪製核心 (Viewport*, x, y, shapeset, index, …共 10 個參數) —— cdecl，開頭 6 bytes
+static const BYTE  HOOK4_PROLOGUE[] = { 0x55, 0x8B, 0xEC, 0x53, 0x56, 0x57 };
 
 // 已知的 exe 版本（PE TimeDateStamp），僅用於顯示
 struct KnownExe { DWORD timestamp; const char* name; };
@@ -104,6 +111,13 @@ static const char* SIG_BIGTEXT =
     "BE 45 F4 85 C0 0F 84 9E 01 00 00 0F BE 45 F4 83 F8 41 0F 8C 6B 00 00 00 "
     "0F BE 45 F4 83 F8 7A 0F 8F 5E 00 00 00 0F BE 45 F4 83 E8 41 88 45 F4 66 "
     "0F BE 45 F4 50";
+// 精靈繪製核心：開頭 61 bytes（Wing1 / SM1 / SM2 三個 exe 逐位元組相同，不需要遮罩；每個 exe 只有一筆）。
+// 內容：prologue、檢查 shapeset != 0、index >= 0、viewport 有效，再呼叫「驗證 shapeset 魔數」的函式。
+// Transfer 也有同樣開頭的函式，但沒有選單；Hook4 只在找得到 Hook3 的 exe 安裝（見 main）。
+static const char* SIG_SPRITE_CORE =
+    "55 8B EC 53 56 57 83 7D 14 00 0F 84 23 00 00 00 83 7D 18 00 0F 8C 19 00 00 00 "
+    "8B 45 08 83 38 00 0F 84 0D 00 00 00 8B 45 08 83 78 04 00 0F 85 05 00 00 00 "
+    "E9 51 01 00 00 8B 45 14 50 E8";
 static const int SIG_DRAW_FORMATTED_CALLBACK_OFS = 24;   // 特徵碼內 "68 imm32" 的 imm32 位置
 
 // ─────────────────────────────────────────────
@@ -245,6 +259,66 @@ static NewSectionResult add_new_section(std::vector<BYTE>& pe, DWORD needed_size
     return result;
 }
 
+// ─────────────────────────────────────────────
+// 數位簽章（Authenticode）處理
+// ─────────────────────────────────────────────
+// GOG 35th Anniversary 的 WC_*_wcdx_Enhanced.exe 帶有 EA 的 Authenticode 簽章；舊版
+// （Wing1_wcdx.exe 等）沒有。簽章的雜湊涵蓋整個檔案，patch 之後簽章一定失效，
+// 留著只會變成「簽了但雜湊對不上」，部分防毒／Smart App Control／AppLocker 會因此另眼看待。
+// 所以輸出檔要把簽章拿掉；但只在「確實有簽章、且位置合理」時才動手：
+//   - 資料目錄第 4 項（SECURITY）為 0/0 → 沒有簽章，原樣不動（舊版 exe 走這條，行為與以前完全相同）
+//   - 位置不合理（落在表頭／區段資料內，或超出檔案）→ 不敢動，原樣不動並警告
+//   - 簽章在檔尾（標準情形）→ 目錄歸零並把簽章資料從檔案截掉；簽章之前的任何資料（overlay）都保留
+//   - 簽章之後還有別的資料 → 只把目錄歸零（不再被視為簽章），資料位元組不動，避免誤刪
+// 注意：SECURITY 目錄的 VirtualAddress 是「檔案位移」，不是 RVA。
+#ifndef IMAGE_DIRECTORY_ENTRY_SECURITY
+#define IMAGE_DIRECTORY_ENTRY_SECURITY 4
+#endif
+enum StripResult { SIG_NONE = 0, SIG_STRIPPED = 1, SIG_DIR_CLEARED = 2, SIG_SKIPPED_ABNORMAL = 3 };
+
+static StripResult strip_authenticode(std::vector<BYTE>& pe) {
+    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)pe.data();
+    IMAGE_NT_HEADERS*  nt  = (IMAGE_NT_HEADERS*)(pe.data() + dos->e_lfanew);
+
+    if (nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_SECURITY) {
+        printf("Digital signature: none (no security data directory)\n\n");
+        return SIG_NONE;
+    }
+    IMAGE_DATA_DIRECTORY& dd = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_SECURITY];
+    DWORD off = dd.VirtualAddress, size = dd.Size;
+    if (off == 0 && size == 0) {
+        printf("Digital signature: none\n\n");
+        return SIG_NONE;
+    }
+
+    // 簽章必須在表頭與所有區段資料之後
+    DWORD data_end = nt->OptionalHeader.SizeOfHeaders;
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+        DWORD e = sec[i].PointerToRawData + sec[i].SizeOfRawData;
+        if (sec[i].PointerToRawData && e > data_end) data_end = e;
+    }
+    if (size == 0 || off < data_end || (unsigned long long)off + size > pe.size()) {
+        printf("Digital signature: security directory looks abnormal (offset=0x%08lX size=0x%lX; section data ends at 0x%08lX; file size 0x%08lX).\n"
+               "  Left untouched to avoid cutting real data.\n\n",
+               (unsigned long)off, (unsigned long)size, (unsigned long)data_end, (unsigned long)pe.size());
+        return SIG_SKIPPED_ABNORMAL;
+    }
+
+    DWORD cert_end = off + size;
+    DWORD tail = (DWORD)pe.size() - cert_end;
+    printf("Digital signature: found (offset=0x%08lX size=0x%lX).\n", (unsigned long)off, (unsigned long)size);
+    if (tail > 7) {   // 簽章表本身會補到 8 的倍數，<=7 視為補齊
+        dd.VirtualAddress = 0; dd.Size = 0;
+        printf("  There are 0x%lX bytes of other data after the signature, so only the directory entry was cleared (data kept).\n\n", (unsigned long)tail);
+        return SIG_DIR_CLEARED;
+    }
+    pe.resize(off);
+    dd.VirtualAddress = 0; dd.Size = 0;
+    printf("  Removed (the patch invalidates it anyway). File truncated to 0x%08lX; the output exe will be unsigned.\n\n", (unsigned long)off);
+    return SIG_STRIPPED;
+}
+
 struct KernelIat {
     DWORD load_library_a   = 0;
     DWORD get_proc_address = 0;
@@ -369,6 +443,7 @@ struct HookTargets {
     DWORD hook1 = 0;            // DrawFormattedText
     DWORD hook2 = 0;            // DrawTextString
     DWORD hook3 = 0;            // DrawBigText（開場字幕／製作名單）
+    DWORD hook4 = 0;            // 精靈繪製核心（圖片替換）
 };
 
 static HookTargets find_hook_targets(const std::vector<BYTE>& pe, DWORD image_base) {
@@ -391,6 +466,12 @@ static HookTargets find_hook_targets(const std::vector<BYTE>& pe, DWORD image_ba
     for (DWORD v : h) printf("  0x%08lX", (unsigned long)v);
     printf("\n");
     if (h.size() == 1) t.hook3 = h[0];
+
+    h = scan_code_sections(pe, image_base, SIG_SPRITE_CORE);
+    printf("[Signature] SpriteCore       : %zu match(es)", h.size());
+    for (DWORD v : h) printf("  0x%08lX", (unsigned long)v);
+    printf("\n");
+    if (h.size() == 1) t.hook4 = h[0];
 
     h = scan_code_sections(pe, image_base, SIG_DRAW_FORMATTED);
     printf("[Signature] DrawFormattedText: %zu match(es) (includes a look-alike sibling function; filtered by callback thunk)", h.size());
@@ -706,15 +787,19 @@ static HookInstallResult install_hook(std::vector<BYTE>& pe, DWORD image_base,
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        printf("Usage: wc1cht_patch.exe <Wing1_wcdx.exe | SM1_wcdx.exe | SM2_wcdx.exe | Transfer_wcdx.exe> [--hook1=0xVA] [--hook2=0xVA] [--hook3=0xVA]\n");
+        printf("Usage: wc1cht_patch.exe <Wing1_wcdx.exe | SM1_wcdx.exe | SM2_wcdx.exe | Transfer_wcdx.exe> [--hook1=0xVA] [--hook2=0xVA] [--hook3=0xVA] [--hook4=0xVA] [--keep-signature]\n");
         printf("      Writes *_cht.exe next to the input file (the original is left untouched)\n");
+        printf("      If the input has an Authenticode signature (GOG Enhanced exes) it is removed from the output; use --keep-signature to keep it\n");
         return 1;
     }
-    DWORD force_hook1 = 0, force_hook2 = 0, force_hook3 = 0;
+    DWORD force_hook1 = 0, force_hook2 = 0, force_hook3 = 0, force_hook4 = 0;
+    bool keep_signature = false;
     for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--keep-signature") == 0) { keep_signature = true; continue; }
         if (!parse_hex_arg(argv[i], "--hook1=", force_hook1) &&
             !parse_hex_arg(argv[i], "--hook2=", force_hook2) &&
-            !parse_hex_arg(argv[i], "--hook3=", force_hook3))
+            !parse_hex_arg(argv[i], "--hook3=", force_hook3) &&
+            !parse_hex_arg(argv[i], "--hook4=", force_hook4))
             fprintf(stderr, "Ignoring unknown argument: %s\n", argv[i]);
     }
 
@@ -749,6 +834,9 @@ int main(int argc, char* argv[]) {
                known ? known : "unknown version (using signature search; after patching, enable logging in wc1cht.ini and check wc1cht_debug.log)");
     }
 
+    if (keep_signature) printf("Digital signature: kept as-is (--keep-signature); note that it will be invalid after patching\n\n");
+    else strip_authenticode(pe);
+
     KernelIat kiat = find_kernel_iat(pe, image_base);
     if (!kiat.load_library_a || !kiat.get_proc_address) {
         fprintf(stderr, "Could not find the IAT entries for LoadLibraryA/GetProcAddress\n");
@@ -761,12 +849,17 @@ int main(int argc, char* argv[]) {
     if (force_hook1) { tg.hook1 = force_hook1; printf("[Manual override] Hook1 = 0x%08lX\n", (unsigned long)tg.hook1); }
     if (force_hook2) { tg.hook2 = force_hook2; printf("[Manual override] Hook2 = 0x%08lX\n", (unsigned long)tg.hook2); }
     if (force_hook3) { tg.hook3 = force_hook3; printf("[Manual override] Hook3 = 0x%08lX\n", (unsigned long)tg.hook3); }
+    if (force_hook4) { tg.hook4 = force_hook4; printf("[Manual override] Hook4 = 0x%08lX\n", (unsigned long)tg.hook4); }
+    // Hook4（圖片替換）只給有開場／選單的遊戲 exe：找不到 Hook3（Transfer）就不裝，除非手動指定
+    if (tg.hook4 && !tg.hook3 && !force_hook4) { printf("[Hook4] Sprite core found but this exe has no intro/menu (no DrawBigText); not installing Hook4.\n"); tg.hook4 = 0; }
     printf("\nResolved: Hook1(DrawFormattedText)=0x%08lX (WC1: 0x%08lX, offset %+ld)\n",
            (unsigned long)tg.hook1, (unsigned long)WC1_VA_HOOK1, (long)tg.hook1 - (long)WC1_VA_HOOK1);
     printf("          Hook2(DrawTextString)   =0x%08lX (WC1: 0x%08lX, offset %+ld)\n",
            (unsigned long)tg.hook2, (unsigned long)WC1_VA_HOOK2, (long)tg.hook2 - (long)WC1_VA_HOOK2);
-    printf("          Hook3(DrawBigText)      =0x%08lX (WC1: 0x%08lX, offset %+ld)\n\n",
+    printf("          Hook3(DrawBigText)      =0x%08lX (WC1: 0x%08lX, offset %+ld)\n",
            (unsigned long)tg.hook3, (unsigned long)WC1_VA_HOOK3, (long)tg.hook3 - (long)WC1_VA_HOOK3);
+    printf("          Hook4(SpriteCore)       =0x%08lX (WC1: 0x%08lX, offset %+ld)\n\n",
+           (unsigned long)tg.hook4, (unsigned long)WC1_VA_HOOK4, (long)tg.hook4 - (long)WC1_VA_HOOK4);
 
     // ── Hook 1: DrawFormattedText（星圖標籤等單行格式化文字）──
     HookConfig cfg1;
@@ -808,13 +901,28 @@ int main(int argc, char* argv[]) {
 
     HookInstallResult r3;
     if (tg.hook3) r3 = install_hook(pe, image_base, kiat, cfg3);
-    else printf("[Hook3] This exe has no DrawBigText (normal for the Transfer tool; for other versions use --hook3=0xVA). Skipped.\n");
+    else printf("[Hook3] DrawBigText signature not found in this exe (older Transfer builds do not have it; for other versions use --hook3=0xVA). Skipped.\n");
+
+    // ── Hook 4: 精靈繪製核心（圖片替換：進入遊戲前選單的英文按鈕圖等；找不到就略過，不影響前三個）──
+    HookConfig cfg4;
+    cfg4.label              = "Hook4(SpriteCore)";
+    cfg4.target_va_base     = tg.hook4 ? tg.hook4 - (image_base - IMAGE_BASE) : 0;
+    cfg4.known_prologue     = HOOK4_PROLOGUE;
+    cfg4.known_prologue_len = sizeof(HOOK4_PROLOGUE);
+    cfg4.hook_fn_name       = "hook_draw_sprite";
+    cfg4.setter_fn_name     = "wc1cht_set_trampoline4";
+    cfg4.section_name       = ".wc1cht4";
+
+    HookInstallResult r4;
+    if (tg.hook4) r4 = install_hook(pe, image_base, kiat, cfg4);
+    else printf("[Hook4] Sprite core not installed (menu button images will stay in English; other hooks are not affected).\n");
 
     if (!r1.ok && !r2.ok && !r3.ok) {
         fprintf(stderr, "All hooks failed to install; no file written.\n");
         return 1;
     }
     if (tg.hook3 && !r3.ok) printf("Hook3 (intro captions) failed to install; they will stay in English. The other hooks are not affected.\n");
+    if (tg.hook4 && !r4.ok) printf("Hook4 (menu button images) failed to install; they will stay in English. The other hooks are not affected.\n");
     if (!r1.ok) printf("Hook1 (star-map labels) failed to install; they will not be translated, but Hook2 is still written.\n");
     if (!r2.ok) printf("Hook2 (character dialogue) failed to install; it will not be translated, but Hook1 is still written.\n");
 
@@ -849,6 +957,11 @@ int main(int argc, char* argv[]) {
         printf("\nHook3 technical summary:\n");
         printf("  Trampoline VA: 0x%08lX (jumps back to 0x%08lX)\n", r3.trampoline_va, r3.continue_va);
         printf("  Hook entry:    0x%08lX -> JMP 0x%08lX\n", r3.hook_va, r3.dispatcher_va);
+    }
+    if (r4.ok) {
+        printf("\nHook4 technical summary:\n");
+        printf("  Trampoline VA: 0x%08lX (jumps back to 0x%08lX)\n", r4.trampoline_va, r4.continue_va);
+        printf("  Hook entry:    0x%08lX -> JMP 0x%08lX\n", r4.hook_va, r4.dispatcher_va);
     }
     printf("\nDeploy: put wc1cht.dll / wc1cht.ini / the translation file and font files named in wc1cht.ini\n        in the same folder as %s,\n", out_path);
     printf("then run %s instead of the original exe.\n", out_path);

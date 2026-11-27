@@ -12,6 +12,7 @@
 - 配合遊戲畫面使用不同大小的中文字型
 - 加強因為新電腦過快問題的減速功能
 - 中文化支援主遊戲及兩套資料片
+- 支援GOG版Wing Commander - 35th Anniversary Edition
 - $\color{red}{中文化不含遊戲原始檔}$
 
 ---
@@ -21,6 +22,7 @@
 wc1_CHT/
 ├── wc1cht.ini                  設定檔（字型、場景規則等）
 ├── wc1zh.trs                   主翻譯表
+├── wc1cht_spr.bin              替換圖片資源檔
 │
 ├── src/
 │   ├── wc1cht.cpp              Hook DLL 主程式（Hook1／Hook2／Hook3、翻譯比對、字型繪製、折行）
@@ -48,7 +50,9 @@ wc1_CHT/
     ├── wcres.py                原WCDX專案 解包工具python化 
     ├── wcfont.py               原WCDX專案 字型檔解析工具python化
     ├── wc1_extract_text.py     匯出可翻譯文字 TSV
-    └── wc1cht_hash_tool.py     翻譯對照檔編譯工具
+    ├── wc1cht_hash_tool.py     翻譯對照檔編譯工具
+    ├── wc1cht_spr.txt          替換圖片資源檔Index
+    └── wc1spr_tool.py          匯出替換圖片資源檔工具
 ```
 
 ---
@@ -147,6 +151,18 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
   </tr>
 </table>
 
+## 遊戲地圖中文化
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="./WC1CHT_009.png">
+        <img src="./WC1CHT_009.png" alt="織女星星圖" width="80%">
+      </a>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## 額外功能
@@ -165,14 +181,14 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
   - 要注意開啟此模式，遊戲會產生標記，玩家名字會變成[CHEATER]，記得存檔前要關掉
 
 2. 降速
-  KS原版本可以按[ALT]+[N]或[ALT]+[M]透過調整FPS來升降遊戲速度，但只有在空戰有作用，本專案加強功能，在ini中開啟標籤，可以透過[F10]和[F11]來調整速度。
+  KS原版本可以按[ALT]+[N]或[ALT]+[M]透過調整FPS來升降遊戲速度，但只有在空戰有作用，本專案加強功能，在ini中開啟標籤，可以透過[ALT]+[F10]和[ALT]+[F11]來調整速度。(GOG版用到F10所以必須改變使用其他熱鍵)
   ```
   [Speed]
   Enable=1 ;預設開啟
   MHzSteps=16,20,25,33,40,50,66,80 ;以CPU時脈命名檔數
   CpuMHz=33 ;預設起始時脈
-  SlowerKey=F10 ;預設降速按鈕
-  FasterKey=F11 ;預設升速按鈕
+  SlowerKey=ALT+F10 ;預設降速按鈕
+  FasterKey=ALT+F11 ;預設升速按鈕
   OtherFps=11  ;除空戰場景外其他場景也降速
   ```
   - 改用CPU時脈的方式設定可以淺顯易懂。
@@ -197,12 +213,12 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | 英文 | 中文 | 備註 |
 |---|---|---|
 | Terra | 地球 | 母星 |
-| Vega | 織女 | Vega Sector |
-| Antares | 心宿二 | Antares Sector |
-| Deneb | 天津四 | Deneb Sector |
+| Vega | 織女 | 織女星區 |
+| Antares | 心宿二 | 心宿二星區 |
+| Deneb | 天津四 | 天津四星區 |
 | Enyo | 埃尼奧 | 開場簡報室星系 |
-| Hubble's | 哈伯 | Hubble's Star System |
-| Planck's | 普朗克 | Planck's Star（聯邦失去的星系） |
+| Hubble's | 哈伯 | 哈伯之星星系 |
+| Planck's | 普朗克 | 普朗克之星（聯邦失去的星系） |
 | Venice | 凡尼斯 | |
 | Corsair | 科賽爾 | |
 | Brimstone | 布林斯通 | |
@@ -217,7 +233,7 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Rostov | 羅斯托夫 | |
 | Ymir | 尤彌爾 | |
 | McAuliffe | 麥考利夫 | |
-| Goddard | 戈達德 | Goddard Colony |
+| Goddard | 戈達德 | 戈達德殖民地 |
 | Hell's Kitchen | 地獄廚房 | 難民／平民殖民地 |
 | Epsilon Station | 葉普西隆太空站 | |
 | Terran Research Colony | 地球聯邦科學考察站 | |
@@ -230,15 +246,15 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Austin | 奧斯汀號 | 我方 |  |
 | General Powell / Powell | 鮑威爾將軍號／鮑威爾號 | 我方 | 曾被俘獲 |
 | Perez de Cuellar | 德奎利亞爾號 | 我方 |  |
-| Marciano | 馬西亞諾號 | 我方 | Venture 級護衛艦 |
+| Marciano | 馬西亞諾號 | 我方 | 曼徹級護衛艦 |
 | Johann | 約翰號 | 我方 | |
 | Exeter | 艾希特級 | 我方 | 驅逐艦級別，亦為艦名 |
 | Trygvie Lie | 賴伊號 | 我方 | |
 | Tsiolkovsky | 齊奧卡夫斯基號 | 我方 | 研究船 |
 | Winterrowd | 溫特勞德號 | 我方 | |
 | Jerusalem | 耶路撒冷號 | 我方 | |
-| Formidable | 嚴陣號 | 我方 | Della Guardia 指揮 |
-| Gwenhyvar | 格溫威華號 | 我方 | 傳說艦名 |
+| Formidable | 嚴陣號 | 我方 | 德拉．瓜迪亞指揮 |
+| Gwenhyvar | 關海法號 | 我方 | 傳說艦名 |
 | Hornet | 大黃蜂式 | 我方 | 輕型戰機 |
 | Scimitar | 彎刀式 | 我方 | 中型戰機 |
 | Raptor | 猛禽式 | 我方 | 重型戰機 |
@@ -251,13 +267,13 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Salthi | 煞星式 | 敵方 | 中型戰機 |
 | Gratha | 格殺式 | 敵方 | 重型戰機 |
 | Jalthi | 角星式 | 敵方 | 重型戰機 |
-| Hhriss | 赫里斯式 | 敵方 | 新型戰機 |
+| Hhriss | 銳星式 | 敵方 | 新型戰機 |
 | Fralthi | 弗拉斯級 | 敵方 | 巡洋艦 |
 | Snakeir | 史奈克級 | 敵方 | 航艦 |
 | Dorkir | 多爾克級 | 敵方 | 主力艦 |
 | Ralari | 拉歐里級 | 敵方 | 護衛／巡防艦 |
 | Lumbari | 倫巴里級 | 敵方 | 補給艦 |
-| Sivar | 西瓦號 | 敵方 | Lord Sivar 及以其命名的目標 |
+| Sivar | 西瓦號 | 敵方 | 及西瓦之神命名 |
 
 ### 4. 部隊／小隊
 | 英文 | 中文 | 備註 |
@@ -282,6 +298,7 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Marines | 陸戰隊 | |
 | Company Zebra | Z連 | 陸戰隊 | |
 | Imperial Guard | 帝國親衛隊 | 基拉西皇家衛隊 | |
+| Drakhai | 爪開隊 | 帝國菁英飛行員 | |
 
 ### 5. 人物
 
@@ -302,28 +319,27 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 **其他人物**
 | 英文 | 中文 | 備註 |
 |---|---|---|
-| Shotglass | 烈酒杯 | 酒吧酒保 |
-| Sam | 山姆 | 酒吧人物 |
+| Shotglass | 烈酒杯 | 酒吧酒保呼號 |
+| Sam | 山姆 | 酒保本名 |
 | Halcyon | 海爾西恩 | 上校，基地指揮官 |
-| Kristi Marks | 克莉絲蒂．馬克斯 | 少校，Company Zebra |
+| Kristi Marks | 克莉絲蒂．馬克斯 | 少校，Z連 |
 | Baker | 貝克 | 少校，Vega Sector |
-| Roberts | 羅伯茨 | 上校 |
+| Roberts | 羅勃茲 | 上校 |
 | Zaritsky | 札里茨基 | 上校 |
-| Della Guardia | 德拉．瓜迪亞 | 指揮官，Formidable |
+| Della Guardia | 德拉．瓜迪亞 | 指揮官 |
 | Khalsa | 卡爾薩 | 博士 |
-| Larrhi | 拉里 | 上尉，Firekka 人 |
+| Larrhi | 拉里 | 上尉，費雷卡人 |
 
 **敵方人物**
 | 英文 | 中文 | 稱號 | 中文稱號 | 身分 |
 |---|---|---|---|---|
 | Lord Sivar | 西瓦主神 | | | 神 |
-| Thrakhath | 斯拉克薩斯 | | | 皇子 |
+| Thrakhath | 蘇拉凱 | | | 皇子 |
 | Ralgha | 拉爾加 | | | 艦長 |
 | Bakhtosh | 巴塔許 | Redclaw | 紅爪 | 男爵，王牌 |
 | Khajja | 卡賈 | the Fang | 獠牙 | 王牌 |
 | Bhurak | 布拉克 | Starkiller | 弒星者 | 王牌 |
 | Dakhath | 達卡斯 | the Deathstroke | 絕殺 | 王牌 |
-| Kharang | 卡朗 | | | 空戰通訊中出現 |
 
 ### 6. 軍階／頭銜
 | 英文 | 中文 |
@@ -331,7 +347,7 @@ $\color{red}{※中文化完全依據資料片補增及強化套件開發，務�
 | Admiral | 上將 |
 | General | 將軍 |
 | Colonel | 上校 |
-| LT. COL. | 中校 |
+| Lieutenant Colonel / LT. COL. | 中校 |
 | Major | 少校 |
 | Captain | 上尉 |
 | Lieutenant / 1ST LT. | 中尉 |
@@ -380,11 +396,7 @@ cmake --build build --config Release
 ---
 
 ## License
-<<<<<<< HEAD
-詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file) ，開發過程使用Anthropic Claude。
-=======
 詳見 [LICENSE](https://github.com/lightgreentw/wc1_CHT/tree/main?tab=GPL-3.0-1-ov-file)，開發過程使用Anthropic Claude。
->>>>>>> 3f84e81c4cc5a8cdb2c371487e2af7481916e37e
 字型檔不在前述授權範圍內，請依各自的條款使用。
 本專案為非遊戲官方的粉絲專案。
 

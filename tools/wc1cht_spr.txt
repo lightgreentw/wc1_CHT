@@ -1,0 +1,9 @@
+; wc1cht_spr.txt — 精靈替換對照表（給 wc1spr_tool.py build 用）
+; 格式：來源精靈(檔名:資源編號:精靈序號)  圖檔     用 wc1spr_tool.py scan 可以列出所有精靈
+;
+; 進入遊戲前的選單按鈕（236x38）。TITLE.VGA 資源 4 = WC1 / SM1 用；TITLE1.VGA 資源 0 = SM2 用
+TITLE.VGA:4:0     TITLE.VGA-IMAGE_001.pcx    ; Start Vega Campaign      → 進入織女星戰役   （WC1）
+TITLE.VGA:4:1     TITLE.VGA-IMAGE_002.pcx    ; Continue Campaign        → 繼續戰役         （WC1 / SM1）
+TITLE.VGA:4:2     TITLE.VGA-IMAGE_003.pcx    ; Start Secret Missions    → 進入祕密任務     （SM1）
+TITLE1.VGA:0:0    TITLE.VGA-IMAGE_004.pcx    ; Start Secret Missions 2  → 進入祕密任務2    （SM2）
+TITLE1.VGA:0:1    TITLE.VGA-IMAGE_002.pcx    ; Continue Campaign        → 繼續戰役         （SM2）

@@ -54,6 +54,9 @@ static void init_addresses() {
 }
 
 // ───────────── 設定 ─────────────
+// 熱鍵：可寫 F10 / Ctrl+F10 / Alt+F10 / Ctrl+Alt+F9。修飾鍵「寫了就必須按住、沒寫就必須沒按」（精確比對），
+// 這樣 F10、Ctrl+F10、Alt+F10 可以同時分配給不同功能而不互相觸發。
+struct KeySpec { int vk = 0; bool ctrl = false, alt = false; };
 struct Config {
     bool  debug_enable = true;
     bool  debug_auto   = false;     // 遊戲啟動就開 debug
@@ -72,10 +75,14 @@ struct Config {
     bool  alt_nm       = true;      // Speed 啟用時，遊戲原生的 Alt+N / Alt+M 等同 F10 / F11（換檔位），不再是 ±0.5 Hz
     bool  hint         = true;      // 切換檔位時，用遊戲自己的提示訊息顯示目前的 MHz 檔位
     float other_fps    = 0.f;       // >0 才限制非太空戰畫面
-    int   vk_slower    = VK_F10;
-    int   vk_faster    = VK_F11;
+    KeySpec ks_slower, ks_faster;        // [Speed] SlowerKey / FasterKey：可加 Ctrl+ / Alt+（預設 F10 / F11）
     int   timer_res_ms = 1;         // 0 = 不呼叫 timeBeginPeriod
     int   poll_ms      = 20;
+    KeySpec ks_trace;                 // [Log] TraceKey：主執行緒取樣的觸發鍵（預設 F8；可寫 Ctrl+F8 等）
+    float gog_other_fps = 0.f;      // [Speed] GogOtherFps：GOG 場景限速的目標 FPS（0 = 與 OtherFps 相同）。GOG 底版的場景動畫有一部分是用時間推進的，同樣的 FPS 感覺會比原版快，可在這裡單獨調低
+    int   gog_boost_ms = 250;       // [Speed] GogCursorBoostMs：滑鼠有動／按鍵時，這麼多毫秒內暫停場景限速（游標才不會一格一格跳）；0 = 關
+    int   gog_pace     = 1;         // 隱藏選項 [Speed] GogScenePace：預設自動（GOG exe 且 OtherFps>0 才安裝；原版 exe 找不到目標，自動略過）；寫 0 可強制關閉
+    int   trace_dl     = 0;         // 診斷（隱藏選項 [Speed] TraceDeadline=1）：記錄限速器「截止時間」變數每次變動的時間間隔，判斷某個場景有沒有經過限速器
 };
 
 static Config   g_cfg;
@@ -129,6 +136,24 @@ static std::string ini_path() {
     char* sl = strrchr(p, '\\'); if (sl) sl[1] = 0;
     return std::string(p) + "wc1cht.ini";
 }
+static KeySpec parse_keyspec(const std::string& s0, int defvk) {
+    KeySpec k; std::string rest = trim(s0); k.vk = defvk;
+    if (rest.empty()) return k;
+    std::string keyname;
+    size_t pos = 0;
+    while (true) {
+        size_t pl = rest.find('+', pos);
+        std::string tok = trim(rest.substr(pos, pl == std::string::npos ? std::string::npos : pl - pos));
+        std::string low = tok; for (auto& c : low) c = (char)tolower((unsigned char)c);
+        if (pl != std::string::npos && (low == "ctrl" || low == "control")) k.ctrl = true;
+        else if (pl != std::string::npos && low == "alt") k.alt = true;
+        else { keyname = tok; if (pl == std::string::npos) break; }   // 其他（含最後一段）視為鍵名
+        if (pl == std::string::npos) break;
+        pos = pl + 1;
+    }
+    k.vk = vk_from_name(keyname, defvk);
+    return k;
+}
 static std::string ini_s(const std::string& ini, const char* sec, const char* key, const char* def) {
     char buf[512]; GetPrivateProfileStringA(sec, key, def, buf, sizeof(buf), ini.c_str());
     // 去掉行尾註解（; 之後）
@@ -168,10 +193,20 @@ static void load_config() {
     c.alt_nm       = ini_i(ini, "Speed", "AltNM", 1) != 0;
     c.hint         = ini_i(ini, "Speed", "Hint", 1) != 0;
     c.other_fps    = ini_f(ini, "Speed", "OtherFps", 0.f);
-    c.vk_slower    = vk_from_name(ini_s(ini, "Speed", "SlowerKey", "F10"), VK_F10);
-    c.vk_faster    = vk_from_name(ini_s(ini, "Speed", "FasterKey", "F11"), VK_F11);
+    c.ks_slower    = parse_keyspec(ini_s(ini, "Speed", "SlowerKey", "F10"), VK_F10);
+    c.ks_faster    = parse_keyspec(ini_s(ini, "Speed", "FasterKey", "F11"), VK_F11);
     c.timer_res_ms = ini_i(ini, "Speed", "TimerResolution", 1);
     c.poll_ms      = std::max(5, std::min(100, ini_i(ini, "Speed", "PollMs", 20)));
+    c.gog_pace     = ini_i(ini, "Speed", "GogScenePace", 1);
+    c.gog_other_fps = ini_f(ini, "Speed", "GogOtherFps", 0.f);
+    c.gog_boost_ms = std::max(0, std::min(2000, ini_i(ini, "Speed", "GogCursorBoostMs", 250)));
+    {   // 診斷追蹤：放在 [Log]，且 [Log] Enable=1 才有作用（舊寫法 [Speed] 也還讀得到）
+        bool log_on = ini_i(ini, "Log", "Enable", 0) != 0;
+        int td = ini_i(ini, "Log", "TraceDeadline", ini_i(ini, "Speed", "TraceDeadline", 0));
+        c.trace_dl = log_on ? td : 0;
+        std::string tk = ini_s(ini, "Log", "TraceKey", ini_s(ini, "Speed", "TraceKey", "F8").c_str());
+        c.ks_trace = parse_keyspec(tk, VK_F8);
+    }
 
     // ── 速度設定：新鍵（[Speed] CpuMHz / MHzSteps / HzPerMHz / GameHz）優先，舊鍵（[CpuClock]、Preset 等）只做相容 ──
     wcspeed::Input in;
@@ -349,6 +384,7 @@ static float mhz_to_hz(float mhz) { float hz = mhz * g_cfg.hz_per_mhz; if (hz < 
 // 遊戲原生的 Alt+N / Alt+M 處理，以及我們模擬的那一下，都會「晚一個畫面」才被遊戲執行（遊戲每個畫面才處理一次訊息，
 // 4 Hz 時一個畫面 250ms），所以切換檔位後的這段時間內：把原生處理造成的 FPS 變數變動還原、把它印出的提示改寫成 MHz。
 static DWORD g_revert_until = 0;
+static bool  g_gog_pace_on = false;       // GOG 場景限速已安裝（speed_enforce 會改用 GogOtherFps）
 static DWORD g_ignore_alt_until = 0;      // 這段時間內忽略 Alt+N/M 的按鍵邊緣（避免同一次按鍵被算兩次）
 static char  g_hint_text[40] = "";
 static inline bool tick_open(DWORD until) { return (int)(until - GetTickCount()) > 0; }
@@ -445,7 +481,10 @@ static void speed_enforce() {
     DWORD mode = 0, ms = 0; rd32(A_FPS_MODE, mode); rd32(A_FRAME_MS, ms);
     float want_fps = 0;
     if (mode == 1) want_fps = g_fps;
-    else if (g_cfg.other_fps > 0.f) { float o = 0; rdf(A_FPS_OTHER, o); if (o != g_cfg.other_fps) wrf(A_FPS_OTHER, g_cfg.other_fps); want_fps = g_cfg.other_fps; }
+    else if (g_cfg.other_fps > 0.f) {
+        float tgt = (g_gog_pace_on && g_cfg.gog_other_fps > 0.f) ? g_cfg.gog_other_fps : g_cfg.other_fps;
+        float o = 0; rdf(A_FPS_OTHER, o); if (o != tgt) wrf(A_FPS_OTHER, tgt); want_fps = tgt;
+    }
     if (want_fps > 0.f) {
         float disp_fps = want_fps * (mode == 1 && g_render_mult > 1 ? (float)g_render_mult : 1.0f);   // 內插時，每次換頁的間隔 = 模擬間隔 / 倍率
         DWORD want_ms = (DWORD)(1000.0f / disp_fps + 0.5f); if (want_ms < 1) want_ms = 1;
@@ -489,12 +528,187 @@ static bool game_has_focus() {
     return pid == GetCurrentProcessId();
 }
 static bool key_down(int vk) { return vk && (GetAsyncKeyState(vk) & 0x8000) != 0; }
+static bool keyspec_down(const KeySpec& k) {
+    return k.vk && key_down(k.vk) && (key_down(VK_CONTROL) == k.ctrl) && (key_down(VK_MENU) == k.alt);
+}
+
+
+// ───────────────────────── 診斷：主執行緒取樣（隱藏選項 [Speed] TraceDeadline=2）─────────────────────────
+// 用途：找出「某個場景的節拍到底卡在哪裡」。按 TraceKey（預設 F8，Ctrl+F8 也可）開始，之後 10 秒每 ~2ms 暫停主執行緒一瞬間，記下 EIP 與堆疊上
+// 「像是遊戲程式碼的返回位址」（掃描堆疊前 96 個 DWORD、取落在 exe 第一個程式碼區段內的前 3 個），結束後把次數最多的
+// 組合寫進 log。取樣時只做 Suspend → 讀暫存器/堆疊 → Resume，不在暫停期間配置記憶體或寫 log，避免死結。
+static DWORD g_main_tid = 0;
+struct TraceSample { DWORD eip; DWORD c1, c2, c3, c4; };
+static TraceSample g_ts[6000];
+static DWORD g_trace_wlo = 0, g_trace_whi = 0;   // wcdx.dll 影像範圍（等待若發生在 wcdx 內，堆疊上的 wcdx 返回位址也要記）
+
+static void trace_main_thread() {
+    if (!g_main_tid) { WCCEXT_LOG("[追蹤] 找不到主執行緒 ID"); return; }
+    HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, g_main_tid);
+    if (!h) { WCCEXT_LOG("[追蹤] OpenThread 失敗 (%lu)", (unsigned long)GetLastError()); return; }
+    // exe 第一個程式碼區段範圍
+    DWORD lo = 0x401000, hi = 0x4A0000;
+    {
+        BYTE* base = (BYTE*)GetModuleHandleA(NULL);
+        IMAGE_DOS_HEADER* dh = (IMAGE_DOS_HEADER*)base;
+        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dh->e_lfanew);
+        IMAGE_SECTION_HEADER* sh = IMAGE_FIRST_SECTION(nt);
+        for (int i = 0; i < nt->FileHeader.NumberOfSections; i++)
+            if (sh[i].Characteristics & IMAGE_SCN_CNT_CODE) { lo = (DWORD)(uintptr_t)base + sh[i].VirtualAddress; hi = lo + sh[i].Misc.VirtualSize; break; }
+    }
+    {   HMODULE hw = GetModuleHandleA("wcdx.dll");
+        g_trace_wlo = g_trace_whi = 0;
+        if (hw) { IMAGE_DOS_HEADER* dh = (IMAGE_DOS_HEADER*)hw; IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)((BYTE*)hw + dh->e_lfanew);
+                  g_trace_wlo = (DWORD)(uintptr_t)hw; g_trace_whi = g_trace_wlo + nt->OptionalHeader.SizeOfImage; } }
+    WCCEXT_LOG("[追蹤] 主執行緒取樣開始（10 秒）：程式碼範圍 0x%08lX..0x%08lX  請維持在要檢查的畫面", (unsigned long)lo, (unsigned long)hi);
+    Beep(1200, 80);
+    int n = 0; DWORD t0 = GetTickCount();
+    while (GetTickCount() - t0 < 10000 && n < 6000) {
+        Sleep(2);
+        if (SuspendThread(h) == (DWORD)-1) break;
+        CONTEXT cx; memset(&cx, 0, sizeof(cx)); cx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+        TraceSample sm = {0, 0, 0, 0, 0};
+        if (GetThreadContext(h, &cx)) {
+            sm.eip = cx.Eip;
+            // 掃堆疊（最多 1024 個 DWORD，分 64 個一塊檢查可讀），收「exe 程式碼區段」與「wcdx.dll」內的前 4 個值
+            DWORD* sp = (DWORD*)(uintptr_t)cx.Esp; int found = 0;
+            for (int blk = 0; blk < 16 && found < 4; blk++) {
+                if (IsBadReadPtr(sp + blk * 64, 64 * 4)) break;
+                for (int i = 0; i < 64 && found < 4; i++) {
+                    DWORD v = sp[blk * 64 + i];
+                    if ((v >= lo && v < hi) || (v >= g_trace_wlo && v < g_trace_whi)) {
+                        if (found == 0) sm.c1 = v; else if (found == 1) sm.c2 = v; else if (found == 2) sm.c3 = v; else sm.c4 = v; found++;
+                    }
+                }
+            }
+        }
+        ResumeThread(h);
+        g_ts[n++] = sm;
+    }
+    CloseHandle(h);
+    // 彙整：依 (eip 的模組+偏移, c1, c2, c3) 完全相同者計數
+    struct Agg { TraceSample s; int cnt; };
+    std::vector<Agg> agg;
+    for (int i = 0; i < n; i++) {
+        bool hit = false;
+        for (auto& a : agg) if (a.s.eip == g_ts[i].eip && a.s.c1 == g_ts[i].c1 && a.s.c2 == g_ts[i].c2 && a.s.c3 == g_ts[i].c3 && a.s.c4 == g_ts[i].c4) { a.cnt++; hit = true; break; }
+        if (!hit) agg.push_back({g_ts[i], 1});
+    }
+    std::sort(agg.begin(), agg.end(), [](const Agg& x, const Agg& y) { return x.cnt > y.cnt; });
+    WCCEXT_LOG("[追蹤] 取樣結束：共 %d 個樣本，%d 種不同的位置組合；前 15 名：", n, (int)agg.size());
+    for (size_t i = 0; i < agg.size() && i < 15; i++) {
+        char mod[MAX_PATH] = "?"; HMODULE hm = NULL; DWORD off = 0;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)agg[i].s.eip, &hm) && hm) {
+            char full[MAX_PATH]; GetModuleFileNameA(hm, full, MAX_PATH);
+            const char* b = strrchr(full, '\\'); strncpy(mod, b ? b + 1 : full, sizeof(mod) - 1); mod[sizeof(mod) - 1] = 0;
+            off = agg[i].s.eip - (DWORD)(uintptr_t)hm;
+        }
+        WCCEXT_LOG("[追蹤]  #%zu  %5.1f%%  EIP=0x%08lX (%s+0x%lX)  堆疊上的遊戲/wcdx 位址=0x%08lX / 0x%08lX / 0x%08lX / 0x%08lX",
+                   i + 1, 100.0 * agg[i].cnt / (n ? n : 1), (unsigned long)agg[i].s.eip, mod, (unsigned long)off,
+                   (unsigned long)agg[i].s.c1, (unsigned long)agg[i].s.c2, (unsigned long)agg[i].s.c3, (unsigned long)agg[i].s.c4);
+    }
+    Beep(900, 80);
+}
+
+
+// ───────────────────────── GOG 版：場景換頁函式補上限速（[Speed] GogScenePace）─────────────────────────
+// 背景（log 3a8ce580/34d48a53/73b3b14e + 兩份 exe 的位元組比對）：
+//   GOG「Enhanced」的 exe 另外放了一份「換頁函式」（原版 UpdateScreen 0x46EEA3 的精簡副本，WC1 在 0x42ABA3），
+//   選單／酒吧／寢室等場景迴圈改呼叫這份副本；副本直接呼叫 wcdx 的呈現方法（等垂直同步），完全不經過限速器，
+//   所以 OtherFps 對 GOG 場景無效（原版與舊 exe 的場景走 UpdateScreen → 限速器，所以有效）。
+// 作法：找到這份副本（機器碼特徵），改寫它開頭 9 個 bytes 為跳到我們的小程式：先執行原函式，回來後若「不是太空戰」
+//   （mode != 1）就呼叫遊戲自己的限速器（等同原版 UpdateScreen 最後那次呼叫）。太空戰維持 GOG 原本的節奏。
+//   只改這個遊戲 exe 的函式，不動 wcdx.dll；只在 OtherFps>0 且 exe 裡找得到副本時才安裝（原版 exe 找不到副本，自動略過）。
+// stub 在「非太空戰」時呼叫這個（cdecl，無參數）：滑鼠剛動過／按著按鍵時不加限速，否則呼叫遊戲的限速器
+static DWORD g_boost_until = 0;
+static void __cdecl gog_pace_tick() {
+    static POINT lp = {-32768, -32768}; static SHORT lb = 0;
+    if (g_cfg.gog_boost_ms > 0 && game_has_focus()) {
+        POINT p; SHORT b = (GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON)) & 0x8000;
+        if (GetCursorPos(&p) && (p.x != lp.x || p.y != lp.y || b != lb)) { lp = p; lb = b; g_boost_until = GetTickCount() + (DWORD)g_cfg.gog_boost_ms; }
+    }
+    if (tick_open(g_boost_until)) return;
+    ((void (__cdecl*)(int))(uintptr_t)F_LIMITER)(0);
+}
+static bool install_gog_scene_pace() {
+    if (g_cfg.gog_pace == 0 || g_cfg.other_fps <= 0.f || !g_addr_ok_speed) return false;
+    BYTE* base = (BYTE*)GetModuleHandleA(NULL);
+    IMAGE_DOS_HEADER* dh = (IMAGE_DOS_HEADER*)base; IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dh->e_lfanew);
+    IMAGE_SECTION_HEADER* sh = IMAGE_FIRST_SECTION(nt); DWORD lo = 0, sz = 0;
+    for (int i = 0; i < nt->FileHeader.NumberOfSections; i++)
+        if (sh[i].Characteristics & IMAGE_SCN_CNT_CODE) { lo = (DWORD)(uintptr_t)base + sh[i].VirtualAddress; sz = sh[i].Misc.VirtualSize; break; }
+    if (!lo || sz < 0x400) return false;
+    // 特徵：push ebp; mov ebp,esp; sub esp,0A0h; push ebx; push esi; push edi; call <rel32>; cmp dword ptr [<abs>],0; je <rel32>（UpdateScreen 的開頭）
+    static const BYTE pro[12] = { 0x55,0x8B,0xEC,0x81,0xEC,0xA0,0x00,0x00,0x00,0x53,0x56,0x57 };
+    const BYTE* t = (const BYTE*)(uintptr_t)lo;
+    DWORD cand[8]; int nc = 0;
+    for (DWORD i = 0; i + 0x1a0 < sz && nc < 8; i++) {
+        if (memcmp(t + i, pro, 12) != 0) continue;
+        if (t[i + 12] != 0xE8 || t[i + 17] != 0x83 || t[i + 18] != 0x3D || t[i + 23] != 0x00 || t[i + 24] != 0x0F || t[i + 25] != 0x84) continue;
+        bool has1c = false; for (int k = 0; k < 0x1a0 - 3; k++) if (t[i + k] == 0xFF && t[i + k + 1] == 0x50 && t[i + k + 2] == 0x1C) { has1c = true; break; }
+        if (!has1c) continue;
+        cand[nc++] = lo + i;
+    }
+    DWORD fn = 0;
+    for (int i = 0; i < nc; i++) {
+        DWORD d = cand[i] > F_LIMITER ? cand[i] - F_LIMITER : F_LIMITER - cand[i];
+        WCCEXT_LOG("[GOG場景限速] 候選換頁函式 0x%08lX（離限速器 0x%lX）", (unsigned long)cand[i], (unsigned long)d);
+        if (d > 0x4000 && !fn) fn = cand[i];          // 原版 UpdateScreen 就在限速器旁邊（本身已呼叫限速器），不是目標
+    }
+    if (!fn) { WCCEXT_LOG("[GOG場景限速] 找不到 GOG 的換頁函式副本（%d 個候選都是原版 UpdateScreen）：這不是 GOG exe，略過", nc); return false; }
+
+    BYTE* stub = (BYTE*)VirtualAlloc(NULL, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!stub) { WCCEXT_ERR("[GOG場景限速] VirtualAlloc 失敗"); return false; }
+    BYTE* tramp = stub + 32;
+    memcpy(tramp, (void*)(uintptr_t)fn, 9);                                   // 原函式開頭 9 bytes（push ebp; mov ebp,esp; sub esp,0A0h，沒有相對位址）
+    tramp[9] = 0xE9; *(DWORD*)(tramp + 10) = (fn + 9) - (DWORD)(uintptr_t)(tramp + 14);   // jmp 原函式 +9
+    BYTE* q = stub;
+    *q++ = 0xE8; *(DWORD*)q = (DWORD)(uintptr_t)tramp - (DWORD)(uintptr_t)(q + 4); q += 4;  // call tramp（原函式）
+    *q++ = 0x83; *q++ = 0x3D; *(DWORD*)q = A_FPS_MODE; q += 4; *q++ = 0x01;                  // cmp dword ptr [mode],1
+    *q++ = 0x74; *q++ = 0x05;                                                                // je → ret（太空戰不加限速）
+    *q++ = 0xE8; *(DWORD*)q = (DWORD)(uintptr_t)&gog_pace_tick - (DWORD)(uintptr_t)(q + 4); q += 4;   // call gog_pace_tick（cdecl，無參數）
+    *q++ = 0xC3;                                                                             // ret
+    FlushInstructionCache(GetCurrentProcess(), stub, 64);
+
+    BYTE patch[9]; patch[0] = 0xE9; *(DWORD*)(patch + 1) = (DWORD)(uintptr_t)stub - (fn + 5); memset(patch + 5, 0x90, 4);
+    HANDLE h = g_main_tid ? OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, g_main_tid) : NULL;
+    bool ok = false;
+    for (int tries = 0; tries < 100 && !ok; tries++) {
+        bool safe = true;
+        if (h) {
+            if (SuspendThread(h) == (DWORD)-1) { safe = false; }
+            else {
+                CONTEXT cx; memset(&cx, 0, sizeof cx); cx.ContextFlags = CONTEXT_CONTROL;
+                if (GetThreadContext(h, &cx) && cx.Eip >= fn && cx.Eip < fn + 9) safe = false;   // 主執行緒剛好在被改寫的位元組裡 → 稍後重試
+                if (safe) {
+                    DWORD old = 0;
+                    if (VirtualProtect((void*)(uintptr_t)fn, 9, PAGE_EXECUTE_READWRITE, &old)) {
+                        memcpy((void*)(uintptr_t)fn, patch, 9);
+                        VirtualProtect((void*)(uintptr_t)fn, 9, old, &old);
+                        FlushInstructionCache(GetCurrentProcess(), (void*)(uintptr_t)fn, 9);
+                        ok = true;
+                    }
+                }
+                ResumeThread(h);
+            }
+        } else {                                  // 取不到主執行緒控制權：直接寫（9 bytes，函式開頭）
+            DWORD old = 0;
+            if (VirtualProtect((void*)(uintptr_t)fn, 9, PAGE_EXECUTE_READWRITE, &old)) { memcpy((void*)(uintptr_t)fn, patch, 9); VirtualProtect((void*)(uintptr_t)fn, 9, old, &old); FlushInstructionCache(GetCurrentProcess(), (void*)(uintptr_t)fn, 9); ok = true; }
+            break;
+        }
+        if (!ok) Sleep(1);
+    }
+    if (h) CloseHandle(h);
+    if (ok) { g_gog_pace_on = true; WCCEXT_LOG("[GOG場景限速] 已安裝：換頁函式 0x%08lX 結束後（非太空戰）呼叫限速器 0x%08lX；目標 %.1f FPS（OtherFps=%.1f GogOtherFps=%.1f）；滑鼠活動時暫停限速 %d ms", (unsigned long)fn, (unsigned long)F_LIMITER, g_cfg.gog_other_fps > 0.f ? g_cfg.gog_other_fps : g_cfg.other_fps, g_cfg.other_fps, g_cfg.gog_other_fps, g_cfg.gog_boost_ms); }
+    else    WCCEXT_ERR("[GOG場景限速] 安裝失敗（無法改寫 0x%08lX）", (unsigned long)fn);
+    return ok;
+}
 
 static DWORD WINAPI ext_thread(LPVOID) {
     Sleep(500);                       // 讓遊戲先把初始化做完
     load_config();
     WCCEXT_LOG("[支線] wc1cht_ext 啟動  Debug 鍵=0x%02X  慢=0x%02X 快=0x%02X  MHz 檔位數=%d  AltNM=%d Hint=%d",
-               g_cfg.vk_debug, g_cfg.vk_slower, g_cfg.vk_faster, (int)g_cfg.mhz_steps.size(), g_cfg.alt_nm ? 1 : 0, g_cfg.hint ? 1 : 0);
+               g_cfg.vk_debug, g_cfg.ks_slower.vk, g_cfg.ks_faster.vk, (int)g_cfg.mhz_steps.size(), g_cfg.alt_nm ? 1 : 0, g_cfg.hint ? 1 : 0);
     verify_addresses();
     set_timer_resolution();
 
@@ -512,6 +726,7 @@ static DWORD WINAPI ext_thread(LPVOID) {
             WCCEXT_LOG("[支線] 速度：%s，維持遊戲預設 %.1f Hz（≈ %.0f MHz）；F10/F11 可逐檔調整", g_cfg.start_src.c_str(), g_game_default, g_game_default / g_cfg.hz_per_mhz);
         }
     }
+    if (g_addr_ok_speed && g_cfg.speed_enable) install_gog_scene_pace();
     if (g_addr_ok_dbg && g_cfg.debug_enable) {
         if (install_gaks_hook() == false && g_cfg.alt_as_ctrl) WCCEXT_ERR("[支線] 警告：Alt→Ctrl 相容掛鉤失敗，請直接用 Ctrl+Del / Ctrl+Ins");
         if (g_cfg.debug_auto) { g_dbg_on = 1; debug_apply(true); WCCEXT_LOG("[支線] Debug 模式：啟動時自動開啟"); }
@@ -519,13 +734,29 @@ static DWORD WINAPI ext_thread(LPVOID) {
 
     bool p_dbg = false, p_slow = false, p_fast = false, p_n = false, p_m = false;
     for (;;) {
-        Sleep(tick_open(g_revert_until) ? 2 : g_cfg.poll_ms);     // 剛切換檔位的短時間內用快速輪詢，讓提示改寫得及時
+        Sleep((g_cfg.trace_dl > 0 || tick_open(g_revert_until)) ? 2 : g_cfg.poll_ms);     // 剛切換檔位的短時間內（或診斷中）用快速輪詢
+        if (g_cfg.trace_dl >= 2 && game_has_focus()) {
+            static bool p_f8 = false; bool f8 = keyspec_down(g_cfg.ks_trace);
+            if (f8 && !p_f8) { p_f8 = true; trace_main_thread(); }
+            p_f8 = f8;
+        }
+        if (g_cfg.trace_dl > 0 && g_addr_ok_speed) {
+            // 限速器每次離開都會把「截止時間」[FRAME_DL] 改成 now+frame_ms，所以這個值每變一次 = 限速器跑過一次。
+            // 若某個場景在這裡完全沒有變動，代表那個場景的畫面更新不經過限速器（OtherFps 對它無效）。
+            static DWORD s_last_dl = 0, s_last_t = 0; static int s_lines = 0;
+            DWORD dl = 0; if (rd32(A_FRAME_DL, dl) && dl != s_last_dl && s_lines < 600) {
+                DWORD now = GetTickCount(), mode = 0, ms = 0; rd32(A_FPS_MODE, mode); rd32(A_FRAME_MS, ms);
+                WCCEXT_LOG("[追蹤] 限速器截止時間變動  距上次 %lu ms  frame_ms=%lu  mode=%lu", (unsigned long)(s_last_t ? now - s_last_t : 0), (unsigned long)ms, (unsigned long)mode);
+                s_last_dl = dl; s_last_t = now; s_lines++;
+                if (s_lines == 600) WCCEXT_LOG("[追蹤] 已記滿 600 行，停止追蹤");
+            }
+        }
         bool focus = game_has_focus();
         bool d = focus && key_down(g_cfg.vk_debug);
-        bool ctrl = key_down(VK_CONTROL);                // 實驗版：Ctrl+F10 留給觀測器，不當作降速鍵
+        bool ctrl = key_down(VK_CONTROL);
         bool alt  = key_down(VK_MENU);
-        bool s = focus && !ctrl && key_down(g_cfg.vk_slower);
-        bool f = focus && !ctrl && key_down(g_cfg.vk_faster);
+        bool s = focus && keyspec_down(g_cfg.ks_slower);
+        bool f = focus && keyspec_down(g_cfg.ks_faster);
         bool en = focus && alt && !ctrl && key_down('N');   // 遊戲原生的 Alt+N（-0.5 Hz）
         bool em = focus && alt && !ctrl && key_down('M');   // 遊戲原生的 Alt+M（+0.5 Hz）
 
@@ -561,6 +792,7 @@ static DWORD WINAPI ext_thread(LPVOID) {
 // DllMain 呼叫這個；只建立執行緒，不做任何重事（loader lock 下安全）
 static void wccext_attach(HINSTANCE hInst) {
     wcext::g_hinst = hInst;
+    wcext::g_main_tid = GetCurrentThreadId();   // DllMain 在主執行緒（靜態匯入）被呼叫
     HANDLE h = CreateThread(NULL, 0, wcext::ext_thread, NULL, 0, NULL);
     if (h) CloseHandle(h);
 }

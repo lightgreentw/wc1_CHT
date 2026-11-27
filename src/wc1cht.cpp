@@ -450,6 +450,9 @@ static bool g_clip_guard = true;              // 擋下「會畫到 viewport 外
 static int g_default_align = 3;
 static bool g_term_fallback = true;           // 整句查不到時，把句中已有翻譯的名稱/詞彙單獨換成中文（例如 "Talk to HUNTER." → "Talk to 獵人."）
 static int  g_term_max_len = 40;              // 只對不超過這個長度的字串做詞彙替換（太長的句子換幾個詞只會變成中英夾雜）
+// 「軍階 姓名」→「姓名 軍階」（中文習慣，例：MAJOR CASEY → 凱西 少校）。見 swap_rank_name()
+static bool g_rank_after_name = true;
+static std::vector<std::string> g_rank_list;  // 小寫、長的在前（"1st lt." 要先於 "lt."）
 
 // 字型集：名稱（小寫）→ 字型設定。來源有兩種：
 //   1. 舊版四個區段 Dialogue_Hook1 / Dialogue_Hook2 / Combat_Hook1 / Combat_Hook2（自動登記）
@@ -856,6 +859,11 @@ static const char* DEFAULT_INI_TEXT =
     "; 讓 log 在每次命中時一併寫出雜湊與對應的英文原文／模板，並把未命中清單的雜湊也記下來。只用來除錯，不影響翻譯結果。\r\n"
     "ShowSource=0\r\n"
     "SourceFile=wc1zh.txt\r\n"
+    "; 圖片（精靈）替換的診斷記錄（要 Enable=1 才有作用；平常維持 0）：\r\n"
+    "; SpritesLog=1：記錄「替換成功」和「尺寸對得上但內容不同」的精靈（確認有沒有生效、或找雜湊用）\r\n"
+    "SpritesLog=0\r\n"
+    "; SpritesLogAll=1：把畫過的每一種「面積 >= 400 像素」的精靈都記進 log（寬×高＋雜湊），用來找其他烘進圖的英文。記得用完關掉\r\n"
+    "SpritesLogAll=0\r\n"
     "\r\n"
     "[General]\r\n"
     "; 翻譯對照檔。純文字格式（英文<TAB>中文）或雜湊格式（檔頭 #wc1cht:hash=fnv1a64，由 tools/wc1cht_hash_tool.py 產生）皆可，自動判斷。相對路徑以 wc1cht.dll 所在資料夾為基準\r\n"
@@ -876,6 +884,19 @@ static const char* DEFAULT_INI_TEXT =
     "; 沒有規則、或規則沒寫 Align 時的對齊方式：auto（建議，還原原版）/ left / center / right\r\n"
     "DefaultAlign=auto\r\n"
     "TermMaxLen=40\r\n"
+    "\r\n"
+    "[Names]\r\n"
+    "; 1 = 整段文字是「軍階 姓名」（例：MAJOR CASEY、1ST LT. TANAKA，計分板用）時，改成中文習慣的「姓名 階級」（凱西 少校）。0 = 維持「少校 凱西」\r\n"
+    "RankAfterName=1\r\n"
+    "; 認得的軍階（英文，逗號分隔，不分大小寫）；翻譯取自翻譯表的詞彙（Major=少校…）。名字取自翻譯表詞彙，查不到就保留英文原樣\r\n"
+    "Ranks=COLONEL,LT. COL.,MAJOR,CAPTAIN,1ST LT.,2ND LT.,1ST LT,2ND LT,LIEUTENANT,COMMANDER,GENERAL,ADMIRAL\r\n"
+    "\r\n"
+    "[Sprites]\r\n"
+    "; 圖片（精靈）替換：遊戲裡烘進圖的英文（例如進入遊戲前選單的 Start Vega Campaign）沒有文字可以翻，\r\n"
+    "; 這個功能攔截遊戲的精靈繪製，遇到「內容跟包裡某張原圖一樣」的精靈就改畫中文版。GAMEDAT 原始檔不會被改。\r\n"
+    "; 圖片包用 wc1spr_tool.py 由 PCX 產生（wc1spr_tool.py build GAMEDAT wc1cht_spr.txt wc1cht_spr.bin）\r\n"
+    "Enable=1\r\n"
+    "Pack=wc1cht_spr.bin\r\n"
     "\r\n"
     "[Scene]\r\n"
     "; viewport 寬度 <= 此值 → 空戰場景。0 = 停用這條規則（全部視為對話）\r\n"
@@ -1206,6 +1227,23 @@ static bool load_fonts_from_config() {
         g_default_align = (da == "left") ? 0 : (da == "center") ? 1 : (da == "right") ? 2 : 3;
     }
     g_term_max_len  = ini_get_int(ini, "General", "TermMaxLen", 40);
+    g_rank_after_name = ini_get_int(ini, "Names", "RankAfterName", 1) != 0;
+    {   // Ranks=COLONEL,LT. COL.,MAJOR,...（逗號分隔；不分大小寫；比對時長的優先）
+        std::string rl = ini_get_str(ini, "Names", "Ranks",
+            "COLONEL,LT. COL.,MAJOR,CAPTAIN,1ST LT.,2ND LT.,1ST LT,2ND LT,LIEUTENANT,COMMANDER,GENERAL,ADMIRAL");
+        g_rank_list.clear();
+        size_t a = 0;
+        while (a <= rl.size()) {
+            size_t b = rl.find(',', a); if (b == std::string::npos) b = rl.size();
+            std::string t = rl.substr(a, b - a);
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(t.begin());
+            while (!t.empty() && (t.back() == ' ' || t.back() == '\t' || t.back() == '\r')) t.pop_back();
+            if (!t.empty()) g_rank_list.push_back(lower_str(t));
+            a = b + 1;
+        }
+        std::sort(g_rank_list.begin(), g_rank_list.end(),
+                  [](const std::string& x, const std::string& y) { return x.size() > y.size(); });
+    }
     g_combat_rects.clear();
     {   // "18,14,301,74; 0,0,10,10"
         std::string rs = ini_get_str(ini, "Scene", "CombatRects", "");
@@ -1482,6 +1520,31 @@ static bool lookup_variants(const std::string& key, std::string& zh_out, const c
         if (i > 0 && (v[i].empty() || v[i] == v[0] || (i == 2 && v[i] == v[1]) || (i == 3 && (v[i] == v[1] || v[i] == v[2])))) continue;
         if (trans_exact_find(v[i], zh_out, &g_dbg_hash)) { how = tag_exact[i]; return true; }
         if (match_patterns(v[i], zh_out)) { how = tag_pattern[i]; return true; }
+    }
+    return false;
+}
+
+// 「軍階 姓名」→「姓名 階級」：整段文字剛好是「軍階 + 空白 + 名字」（計分板的 "MAJOR CASEY"、"1ST LT. TANAKA"、玩家自己的 "CAPTAIN BLAIR"）。
+// 軍階用詞彙表翻（Major=少校），名字先查詞彙表（不分大小寫）、再用詞彙替換，都查不到就保留英文（玩家自取的呼號）。
+// 軍階查不到翻譯時不動作（回傳 false，走原本的詞彙替換）。
+static bool swap_rank_name(const std::string& text, std::string& out) {
+    if (!g_rank_after_name || g_rank_list.empty() || text.size() < 3 || text.size() > 48) return false;
+    if (text.find('\n') != std::string::npos) return false;
+    const std::string low = lower_str(text);
+    for (const std::string& r : g_rank_list) {
+        size_t n = r.size();
+        if (low.size() <= n + 1 || low.compare(0, n, r) != 0 || low[n] != ' ') continue;
+        size_t st = n + 1;
+        while (st < text.size() && text[st] == ' ') st++;
+        std::string rank = text.substr(0, n);
+        std::string name = rtrim_ws(text.substr(st));
+        // 只認「軍階 + 一個名字」：名字不含空白、最後一個字是英數字（避免 "Major Casey is here"、"Colonel Halcyon." 這類句子被亂換位）
+        if (name.empty() || name.find(' ') != std::string::npos || !isalnum((unsigned char)name.back())) return false;
+        std::string zr, zn;
+        if (!glossary_lookup(rank, zr)) return false;
+        if (!glossary_lookup(name, zn) && !apply_terms(name, zn)) zn = name;
+        out = zn + " " + zr;
+        return true;
     }
     return false;
 }
@@ -2101,12 +2164,30 @@ static void update_player_names() {
     }
     PlayerRecord* rec = (PlayerRecord*)*p_player_ptr;
 
-    // 安全複製，保證 NUL 結尾
-    strncpy(g_callsign, rec->callsign, sizeof(g_callsign) - 1);
-    g_callsign[sizeof(g_callsign) - 1] = 0;
+    // 這個指標在「讀到別的版本的存檔」（Wing1 讀 SM2、SM1 讀 SM2、SM2 讀 SM1…）時會是垃圾值
+    // （例如 0xFFFFF1C0）：遊戲先把存檔內容整個讀進來，才發現格式不對、跳出
+    // "This saved game is not a … saved game." 的錯誤對話框，這時玩家 record 指標已經被存檔資料蓋掉。
+    // 遊戲自己在錯誤路徑上不會去用它，但我們每畫一個字串都會讀它，直接 strncpy 就會在 msvcrt 裡 access violation。
+    // 所以：先確認整個 record 可讀，不可讀就當作「目前沒有玩家」。
+    if (IsBadReadPtr(rec, sizeof(PlayerRecord))) {
+        static DWORD s_last_bad = 0;
+        if (s_last_bad != (DWORD)(uintptr_t)rec) {          // 同一個壞指標只記一次，避免洗版
+            s_last_bad = (DWORD)(uintptr_t)rec;
+            wclog_force("[玩家] 玩家 record 指標 0x%08X 不可讀（多半是讀到別的版本的存檔），略過 $C/$N 取代",
+                        (unsigned)(uintptr_t)rec);
+        }
+        g_callsign[0] = 0;
+        g_lastname[0] = 0;
+        return;
+    }
 
-    strncpy(g_lastname, rec->last_name, sizeof(g_lastname) - 1);
-    g_lastname[sizeof(g_lastname) - 1] = 0;
+    // 安全複製：欄位只有 14 bytes，最多讀 14 個，保證 NUL 結尾
+    // （舊版用 sizeof(g_callsign)-1 = 31，欄位若沒有 NUL 會多讀到後面的欄位）
+    memcpy(g_callsign, rec->callsign, sizeof(rec->callsign));
+    g_callsign[sizeof(rec->callsign)] = 0;
+
+    memcpy(g_lastname, rec->last_name, sizeof(rec->last_name));
+    g_lastname[sizeof(rec->last_name)] = 0;
 }
 
 // ─────────────────────────────────────────────
@@ -2638,6 +2719,10 @@ static bool process_dialog_text(const char* eng_str, const char* caller_label,
         wclog("[%s] process_dialog_text: eng_str 為空，交還原始函式", caller_label);
         return false;
     }
+    {   // 只有空白的文字（酒吧底部每 0.1 秒畫一次的 " "）：沒有東西可翻，直接交還原函式，也不記成「未命中」
+        const char* q = eng_str; while (*q == ' ') q++;
+        if (*q == 0) return false;
+    }
 
     ensure_initialized(caller_label);
 
@@ -2689,6 +2774,14 @@ static bool process_dialog_text(const char* eng_str, const char* caller_label,
                     zh_tmpl = zs + ": " + zr;
                     found = true; how = "說話者前綴";
                 }
+            }
+        }
+
+        // 整句查不到：「軍階 姓名」→「姓名 階級」（計分板）
+        if (!found && mode != PM_CHECK_EXACT) {
+            std::string zr;
+            if (swap_rank_name(tmpl, zr)) {
+                zh_tmpl = zr; found = true; how = "軍階後置";
             }
         }
 
@@ -2874,6 +2967,117 @@ static int draw_format_segments(std::vector<FmtSeg>& segs) {
 }
 
 // ─────────────────────────────────────────────
+// 10c-2. 限速器等待期間處理視窗訊息（Pump）：限速器等待期間代遊戲處理視窗訊息（消除「沒有回應」）
+// ─────────────────────────────────────────────
+//
+// 2026/11/20 的卡頓偵測器（[Watchdog]，已於 11/21 移除；舊版備份 build/wc1cht.with_watchdog.cpp）log 查出：飛行場景切換（自動飛行）時，遊戲主執行緒整段時間都停在「限速器」的等待迴圈
+// （WC1：0x46E141 一圈 timeGetTime() + Sleep(0)），不是 hook、也不是當機。自動飛行／喪禮這類「不能操作」的段落，
+// 遊戲在內部迴圈一次跑完許多模擬步，期間完全不呼叫視窗訊息處理（PeekMessage），視窗連續超過 5 秒沒處理訊息，
+// Windows 就把它標成「沒有回應」（[Speed] 把遊戲放慢到 8.25 Hz，這段時間會比原速長 2.4 倍）。
+// 做法：把遊戲 exe 匯入表裡的 Sleep 換成我們的版本；只有「從限速器函式裡呼叫」時，先代為處理一輪「非輸入」視窗訊息
+// （寄送／重繪／傳送類；滑鼠與鍵盤訊息原封不動留在佇列，由遊戲自己取），再呼叫真正的 Sleep。其他地方的 Sleep 完全照舊。
+// 不改遊戲程式碼、不碰 wcdx.dll，只改 exe 自己的匯入表（跟 [Debug] 的 GetAsyncKeyState 掛鉤同一種手法）。
+// 固定啟用（11/21 實機確認「沒有回應」消失、游標正常）。限速器函式機器碼對不上時整段略過，不會動到不認得的 exe。
+// 保留一個不公開的暗門：wc1cht.ini 的 [Pump] Enable=0 可關閉（遇到特殊版本出狀況時用來對照）。
+//
+#ifndef WC_PM_QS_NONINPUT
+  // PM_QS_POSTMESSAGE | PM_QS_PAINT | PM_QS_SENDMESSAGE（Win2000 起；QS_xxx << 16，避免舊標頭沒有定義）
+  #define WC_PM_QS_NONINPUT ((0x0008u | 0x0020u | 0x0040u) << 16)
+#endif
+static DWORD g_pump_lo = 0, g_pump_hi = 0;          // 限速器函式的位址範圍
+static void (WINAPI* g_pump_real_sleep)(DWORD) = NULL;
+static volatile LONG g_pump_calls = 0, g_pump_msgs = 0;
+static DWORD g_pump_last = 0;
+static const int g_pump_interval = 30;              // 毫秒：最短多久處理一次（避免每圈 Sleep(0) 都去查訊息佇列）
+
+#if defined(_MSC_VER)
+  #include <intrin.h>
+  #define WC_RETADDR() ((DWORD)(uintptr_t)_ReturnAddress())
+  #define WC_NOINLINE __declspec(noinline)
+#else
+  #define WC_RETADDR() ((DWORD)(uintptr_t)__builtin_return_address(0))
+  #define WC_NOINLINE __attribute__((noinline))
+#endif
+
+static WC_NOINLINE void WINAPI pump_sleep(DWORD ms) {
+    DWORD ra = WC_RETADDR();
+    if (ra >= g_pump_lo && ra < g_pump_hi) {
+        DWORD now = GetTickCount();
+        if (now - g_pump_last >= (DWORD)g_pump_interval) {
+            g_pump_last = now;
+            int n = 0; MSG m;
+            // 只取「寄送／重繪／傳送」類訊息，不碰滑鼠與鍵盤：遊戲自己的輸入佇列（0x43B6D1 起的鏈結串列）每筆事件都會存起來、
+            // 一幀只消化少數幾筆；如果我們把滑鼠移動、按鍵重複全部提前倒進去，事件會堆積，游標就會落後（11/21 實機回報「游標變慢」）。
+            // 輸入訊息留在 Windows 佇列裡，維持原本「滑鼠移動只留最新一筆」的合併行為，由遊戲自己的訊息輪詢取走。
+            while (n < 64 && PeekMessageA(&m, NULL, 0, 0, PM_REMOVE | WC_PM_QS_NONINPUT)) {
+                if (m.message == WM_QUIT) { PostQuitMessage((int)m.wParam); break; }   // 把結束訊息放回去，由遊戲自己的處理流程收尾
+                TranslateMessage(&m);
+                DispatchMessageA(&m);
+                n++;
+            }
+            LONG c = InterlockedIncrement(&g_pump_calls);
+            InterlockedExchangeAdd(&g_pump_msgs, n);
+            if (c == 1 || c == 100 || c == 1000) wclog_force("[Pump] 限速器等待期間代為處理非輸入視窗訊息：第 %ld 次輪詢，累計處理 %ld 則", (long)c, (long)g_pump_msgs);
+        }
+    }
+    g_pump_real_sleep(ms);
+}
+
+static void pump_start() {
+    if (!g_profile_ok) return;
+    HMODULE self = NULL;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)(uintptr_t)&pump_start, &self) || !self) return;
+    char p[MAX_PATH]; DWORD n = GetModuleFileNameA(self, p, MAX_PATH);
+    if (!n || n >= MAX_PATH) return;
+    char* sl = strrchr(p, '\\'); if (sl) sl[1] = 0;
+    std::string ini = std::string(p) + "wc1cht.ini";
+    if (GetFileAttributesA(ini.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    if (ini_get_int(ini.c_str(), "Pump", "Enable", 1) == 0) { wclog_force("[Pump] Enable=0，不代處理視窗訊息"); return; }
+
+    DWORD lim = wcprof::sym(wcprof::tbl::S_LIMITER);
+    static const BYTE sig[9] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C, 0x53, 0x56, 0x57 };    // push ebp; mov ebp,esp; sub esp,0Ch; push ebx/esi/edi
+    if (!lim || IsBadReadPtr((const void*)(uintptr_t)lim, 0x160) || memcmp((const void*)(uintptr_t)lim, sig, 9) != 0) {
+        wclog_err("[Pump] 找不到限速器函式（位址 0x%08lX 的機器碼不符），不代處理視窗訊息", (unsigned long)lim);
+        return;
+    }
+    g_pump_lo = lim; g_pump_hi = lim + 0x15C;
+    HMODULE k32 = GetModuleHandleA("kernel32.dll");
+    g_pump_real_sleep = k32 ? (void (WINAPI*)(DWORD))GetProcAddress(k32, "Sleep") : NULL;
+    if (!g_pump_real_sleep) return;
+
+    BYTE* base = (BYTE*)GetModuleHandleA(NULL);
+    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+    DWORD rva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+    int patched = 0;
+    if (rva) {
+        for (IMAGE_IMPORT_DESCRIPTOR* imd = (IMAGE_IMPORT_DESCRIPTOR*)(base + rva); imd->Name; imd++) {
+            IMAGE_THUNK_DATA* iat = (IMAGE_THUNK_DATA*)(base + imd->FirstThunk);
+            for (; iat->u1.Function; iat++) {
+                if ((void*)(uintptr_t)iat->u1.Function != (void*)g_pump_real_sleep) continue;
+                DWORD old;
+                if (!VirtualProtect(&iat->u1.Function, 4, PAGE_READWRITE, &old)) continue;
+                iat->u1.Function = (DWORD)(uintptr_t)&pump_sleep;
+                VirtualProtect(&iat->u1.Function, 4, old, &old);
+                patched++;
+            }
+        }
+    }
+    // 雙保險：關掉「視窗鬼影化」。Windows 判定「沒有回應」後會用一個鬼影視窗蓋掉遊戲視窗並在標題加上（沒有回應）；
+    // 呼叫 DisableProcessWindowsGhosting 之後，即使訊息迴圈暫時沒動，也不會出現這個標示／白屏（不影響遊戲本身）。
+    // 不依賴 PeekMessage 是否被 Windows 算成「有讀訊息」這種內部細節，所以和上面的代處理訊息互為備援。
+    {
+        HMODULE u32 = GetModuleHandleA("user32.dll");
+        typedef void (WINAPI *PFN_DPWG)(void);
+        PFN_DPWG f = u32 ? (PFN_DPWG)GetProcAddress(u32, "DisableProcessWindowsGhosting") : NULL;
+        if (f) { f(); wclog_force("[Pump] 已呼叫 DisableProcessWindowsGhosting（關閉「沒有回應」鬼影視窗與標題標示）"); }
+        else   wclog_force("[Pump] 找不到 DisableProcessWindowsGhosting，略過");
+    }
+    wclog_force("[Pump] Sleep 匯入表掛鉤：改寫 %d 個匯入槽；限速器範圍 0x%08lX～0x%08lX；每 %d ms 代處理一輪非輸入視窗訊息", patched, (unsigned long)g_pump_lo, (unsigned long)g_pump_hi, g_pump_interval);
+}
+
+
+// ─────────────────────────────────────────────
 // 10d. Hook 1 實作（DrawFormattedText = FUN_0044e215）
 // ─────────────────────────────────────────────
 //
@@ -2925,7 +3129,20 @@ int __cdecl wc1cht_hook1_impl(DWORD* fmt_slot) {
             eng_str = format;
         }
 
-        if (!eng_str) {
+        // 格式字串沒有任何 %s、只有固定文字（例："%X%YPILOT"、"%X%YSORTIES KILLS"，計分板的欄位標題）：
+        // parse_format_string_for_dialog 找不到可翻的字串，改直接展開成英文查表
+        // （只在固定文字至少有 2 個英文字母、且沒有 %s 時才這樣做；只有 %d 之類的數字格式維持原本流程，不去碰）
+        bool force_expand = false;
+        if (!eng_str && has_layout) {
+            int letters = 0; bool has_s = false;
+            for (const char* q = format; *q; q++) {
+                if (*q == '%') { if (q[1] == 's') has_s = true; if (q[1]) q++; continue; }
+                if (isalpha((unsigned char)*q)) letters++;
+            }
+            force_expand = (letters >= 2 && !has_s);
+        }
+
+        if (!eng_str && !force_expand) {
             g_scan_miss_count++;
             return 0;
         }
@@ -2934,7 +3151,7 @@ int __cdecl wc1cht_hook1_impl(DWORD* fmt_slot) {
         // 依實際參數「展開」成完整的英文再查表（例："\nWeapon: %s" → "\nWeapon: Dart DF"）。
         // 展開不了（出現不認得的控制碼）才交還原函式。
         std::string expanded;
-        if (has_layout && !layout.simple) {
+        if (has_layout && (!layout.simple || force_expand)) {
             FmtLayout L2;
             if (expand_format(format, fmt_slot + 1, expanded, L2)) {
                 static long s_exp_log = 0;
@@ -2948,7 +3165,8 @@ int __cdecl wc1cht_hook1_impl(DWORD* fmt_slot) {
                 static long s_skip_log = 0;
                 if (++s_skip_log <= 30)
                     wclog("[Hook1] 格式字串無法展開（%s），交還原函式  format=\"%.60s\"  text=\"%.60s\"",
-                          layout.why, format, eng_str);
+                          layout.why, format, eng_str ? eng_str : "(null)");
+                if (!eng_str) g_scan_miss_count++;
                 return 0;
             }
         }
@@ -3369,6 +3587,237 @@ int __cdecl wc1cht_hook3_impl(DWORD* arg_slot) {
 
 #define WC1CHT_HOOK2_RET "ret $4"
 
+// ─────────────────────────────────────────────
+// 10f. Hook4：精靈替換（把烘進圖資的英文換成中文圖，例如進入遊戲前的選單按鈕）
+// ─────────────────────────────────────────────
+// 攔截點：遊戲的「精靈繪製核心」DrawSprite 本體（三個 exe 都是 55 8B EC 53 56 57 開頭，cdecl 10 個參數）：
+//     (Viewport* vp, int x, int y, DWORD shapeset, int index, int 旋轉, int 縮放X, int 縮放Y, int 翻轉, int 除錯)
+//   shapeset = 整份資源在記憶體裡的位址：[u32 總長][u32 偏移表…][精靈…]；shapeset 前面 8 位元組是遊戲的區塊標頭
+//   （[-8]=魔數 0x6666656A，[-4]=第一次繪製時遊戲自己建立的「範圍表」指標，0 = 還沒建）。
+// 做法：參數起點指標傳進來 → 認出「原精靈」→ 把參數 shapeset/index 改成我們自備的「迷你精靈組」→ 回傳 0 走原函式。
+//   迷你精靈組 = [魔數][0][u32 總長][u32 8][新精靈]；[-4]=0 所以遊戲會自己替它建範圍表（只建一次）。
+//   不能把原精靈組的 [-4] 抄過來：那是整組（含別的精靈）的範圍表。
+// 辨認方式：精靈的 8 位元組標頭（寬高）先預篩，再走完整個精靈取 FNV-1a 雜湊，跟包裡的 key 比對。
+//   雜湊算法與 wc1spr_tool.py 完全相同。包的格式見 wc1spr_tool.py 開頭說明。
+extern "C" {
+    DWORD wc1cht_orig4_addr WC1CHT_ASMLABEL(wc1cht_orig4_addr) = 0;   // Hook4 trampoline
+}
+
+// <<SPR_CORE_BEGIN>>（這一段只靠 SPR_BADPTR 碰 Windows API，測試用 harness 會原樣抽出來編譯）
+#ifndef SPR_BADPTR
+#define SPR_BADPTR(p, n) IsBadReadPtr((p), (n))
+#endif
+struct SprEntry {
+    std::vector<BYTE> blob;     // [魔數 4][0 4][總長 4][8 4][新精靈…]；迷你精靈組的位址 = blob.data() + 8
+    DWORD key = 0;
+    DWORD orig_len = 0;
+    long  hits = 0;
+};
+static std::unordered_map<DWORD, SprEntry> g_spr_map;
+static std::vector<std::vector<BYTE>> g_spr_hdrs;      // 包裡所有精靈的 8 位元組標頭（預篩用）
+
+static DWORD spr_fnv(const BYTE* s, size_t n) {
+    DWORD h = 0x811C9DC5u;
+    for (size_t i = 0; i < n; i++) { h ^= s[i]; h *= 0x01000193u; }
+    return h;
+}
+
+// 走完一個精靈（8 位元組標頭 + 多筆記錄 + 結束記錄），回傳總長；格式不對或超過 maxlen 回傳 0
+static size_t spr_walk_len(const BYTE* s, size_t maxlen) {
+    if (maxlen < 10) return 0;
+    size_t i = 8;
+    for (;;) {
+        if (i + 2 > maxlen) return 0;
+        unsigned code = s[i] | (s[i + 1] << 8); i += 2;
+        if (code == 0) return i;
+        if (i + 4 > maxlen) return 0;
+        i += 4;
+        unsigned n = code >> 1;
+        if (code & 1) {
+            unsigned got = 0;
+            while (got < n) {
+                if (i >= maxlen) return 0;
+                unsigned c = s[i++]; unsigned k = c >> 1;
+                if (k == 0) return 0;
+                if (c & 1) i += 1; else i += k;
+                got += k;
+            }
+            if (got != n) return 0;
+        } else {
+            i += n;
+        }
+        if (i > maxlen) return 0;
+    }
+}
+
+static bool spr_hdr_match(const BYTE* s) {
+    for (const auto& h : g_spr_hdrs) if (memcmp(s, h.data(), 8) == 0) return true;
+    return false;
+}
+
+// 解析圖片包。回傳讀進幾筆；格式錯誤回傳 -1
+static int spr_parse_pack(const BYTE* d, size_t n) {
+    g_spr_map.clear(); g_spr_hdrs.clear();
+    if (n < 12 || memcmp(d, "WSP1", 4) != 0) return -1;
+    DWORD ver, cnt; memcpy(&ver, d + 4, 4); memcpy(&cnt, d + 8, 4);
+    if (ver != 1 || cnt > 4096) return -1;
+    size_t pos = 12;
+    for (DWORD i = 0; i < cnt; i++) {
+        if (pos + 12 > n) return -1;
+        DWORD key, olen, nlen; memcpy(&key, d + pos, 4); memcpy(&olen, d + pos + 4, 4); memcpy(&nlen, d + pos + 8, 4);
+        pos += 12;
+        if (nlen < 10 || nlen > 0x20000 || pos + nlen > n) return -1;
+        if (spr_walk_len(d + pos, nlen) != nlen) return -1;
+        SprEntry e; e.key = key; e.orig_len = olen;
+        e.blob.assign(8 + 8 + nlen, 0);
+        const DWORD magic = 0x6666656Au, total = 8 + nlen, off0 = 8;
+        memcpy(&e.blob[0], &magic, 4);                      // [-8]
+        /* [-4] 保持 0 */
+        memcpy(&e.blob[8], &total, 4);                      // 迷你精靈組：總長
+        memcpy(&e.blob[12], &off0, 4);                      //            第 0 張精靈的偏移
+        memcpy(&e.blob[16], d + pos, nlen);                 //            新精靈
+        bool have = false;
+        for (const auto& h : g_spr_hdrs) if (memcmp(h.data(), d + pos, 8) == 0) { have = true; break; }
+        if (!have) g_spr_hdrs.emplace_back(d + pos, d + pos + 8);
+        g_spr_map[key] = std::move(e);
+        pos += nlen;
+    }
+    return (int)cnt;
+}
+
+// 傳入 Hook 的參數陣列 a[0..4] = vp, x, y, shapeset, index。命中就把 a[3]/a[4] 換成迷你精靈組。
+// 回傳：0 = 沒動；1 = 已替換；2 = 標頭相符但雜湊不在包裡（info 回報雜湊與長度）
+struct SprProbe { DWORD key = 0; DWORD len = 0; SprEntry* entry = nullptr; };
+static int spr_try_replace(DWORD* a, SprProbe* info) {
+    const BYTE* set = reinterpret_cast<const BYTE*>(static_cast<uintptr_t>(a[3]));
+    const int idx = static_cast<int>(a[4]);
+    if (!set || idx < 0 || idx > 4000) return 0;
+    if (SPR_BADPTR(set - 8, 16)) return 0;
+    DWORD magic; memcpy(&magic, set - 8, 4);
+    if (magic != 0x6666656Au) return 0;                     // 不是遊戲登記過的精靈組，交給遊戲自己處理
+    unsigned first = set[4] | (set[5] << 8);                // 偏移表長度（= 第一張精靈的偏移）
+    if (first <= static_cast<unsigned>(idx + 1) * 4u || SPR_BADPTR(set, first)) return 0;
+    DWORD off, noff = 0, total;
+    memcpy(&off, set + (idx + 1) * 4, 4);
+    memcpy(&total, set, 4);
+    const BYTE* s = set + off;
+    if (SPR_BADPTR(s, 8) || !spr_hdr_match(s)) return 0;
+    // 這張精靈的可讀範圍上限：下一張的偏移，最後一張用總長
+    if (static_cast<unsigned>(idx + 2) * 4u < first) memcpy(&noff, set + (idx + 2) * 4, 4); else noff = total;
+    if (noff <= off || noff - off > 0x20000 || SPR_BADPTR(s, noff - off)) return 0;
+    size_t len = spr_walk_len(s, noff - off);
+    if (!len) return 0;
+    DWORD key = spr_fnv(s, len);
+    auto it = g_spr_map.find(key);
+    if (it == g_spr_map.end()) { if (info) { info->key = key; info->len = (DWORD)len; } return 2; }
+    it->second.hits++;
+    a[3] = static_cast<DWORD>(reinterpret_cast<uintptr_t>(it->second.blob.data() + 8));
+    a[4] = 0;
+    if (info) { info->key = key; info->len = (DWORD)len; info->entry = &it->second; }
+    return 1;
+}
+// <<SPR_CORE_END>>
+
+static bool g_spr_inited = false, g_spr_on = false, g_spr_log = false, g_spr_logall = false;
+static std::unordered_set<DWORD> g_spr_logged;
+static int g_spr_log_lines = 0;
+
+static void spr_init() {
+    g_spr_inited = true;
+    if (g_dll_dir.empty()) {                                // 可能比 ensure_initialized 早（第一次畫精靈在選單，文字還沒出現）
+        char dll_path[MAX_PATH];
+        GetModuleFileNameA(GetModuleHandleA("wc1cht.dll"), dll_path, MAX_PATH);
+        char* slash = strrchr(dll_path, '\\');
+        if (slash) slash[1] = 0;
+        g_dll_dir = dll_path;
+    }
+    std::string ini_s = g_dll_dir + "wc1cht.ini";
+    const char* ini = ini_s.c_str();
+    g_spr_on     = ini_get_int(ini, "Sprites", "Enable", 1) != 0;
+    // 圖片替換的診斷記錄放在 [Log]（SpritesLog / SpritesLogAll），[Log] Enable=1 才有作用；[Sprites] 底下不再有 Log / LogAll
+    g_spr_log    = g_log_enabled && ini_get_int(ini, "Log", "SpritesLog", 0) != 0;
+    g_spr_logall = g_log_enabled && ini_get_int(ini, "Log", "SpritesLogAll", 0) != 0;
+    std::string pack = ini_get_str(ini, "Sprites", "Pack", "wc1cht_spr.bin");
+    if (!g_spr_on) { wclog_force("[Sprites] Enable=0，圖片替換停用"); return; }
+    std::string path = join_dir(pack);
+    FILE* fp = fopen(path.c_str(), "rb");
+    if (!fp) {
+        wclog_force("[Sprites] 找不到圖片包 %s，圖片替換停用（要用的話請放 wc1cht_spr.bin 在 DLL 旁邊）", path.c_str());
+        g_spr_on = false;
+        return;
+    }
+    std::vector<BYTE> buf;
+    { BYTE tmp[16384]; size_t r; while ((r = fread(tmp, 1, sizeof(tmp), fp)) > 0) buf.insert(buf.end(), tmp, tmp + r); }
+    fclose(fp);
+    int n = spr_parse_pack(buf.data(), buf.size());
+    if (n < 0) {
+        wclog_err("[Sprites] 圖片包 %s 格式不對（%u 位元組），圖片替換停用", path.c_str(), (unsigned)buf.size());
+        g_spr_on = false;
+        return;
+    }
+    wclog_force("[Sprites] 已載入圖片包 %s：%d 張替換圖  SpritesLog=%d SpritesLogAll=%d", path.c_str(), n, (int)g_spr_log, (int)g_spr_logall);
+    if (g_spr_log) for (const auto& kv : g_spr_map)
+        wclog_force("[Sprites]   key=%08lX 原精靈 %lu 位元組 → 新精靈 %lu 位元組", (unsigned long)kv.first, (unsigned long)kv.second.orig_len, (unsigned long)(kv.second.blob.size() - 16));
+}
+
+static void spr_log_all(const DWORD* a) {                   // LogAll：畫過的每一種大精靈各記一次
+    const BYTE* set = reinterpret_cast<const BYTE*>(static_cast<uintptr_t>(a[3]));
+    const int idx = static_cast<int>(a[4]);
+    if (!set || idx < 0 || idx > 4000 || IsBadReadPtr(set - 8, 16)) return;
+    DWORD magic; memcpy(&magic, set - 8, 4);
+    if (magic != 0x6666656Au) return;
+    unsigned first = set[4] | (set[5] << 8);
+    if (first <= static_cast<unsigned>(idx + 1) * 4u) return;
+    DWORD off, noff = 0, total;
+    memcpy(&off, set + (idx + 1) * 4, 4); memcpy(&total, set, 4);
+    if (static_cast<unsigned>(idx + 2) * 4u < first) memcpy(&noff, set + (idx + 2) * 4, 4); else noff = total;
+    if (noff <= off || noff - off > 0x20000 || IsBadReadPtr(set + off, noff - off)) return;
+    const BYTE* s = set + off;
+    size_t len = spr_walk_len(s, noff - off);
+    if (!len) return;
+    int r = (short)(s[0] | (s[1] << 8)), l = (short)(s[2] | (s[3] << 8)), u = (short)(s[4] | (s[5] << 8)), d = (short)(s[6] | (s[7] << 8));
+    int w = r + l + 1, h = u + d + 1;
+    if (w * h < 400) return;
+    DWORD key = spr_fnv(s, len);
+    if (!g_spr_logged.insert(key).second || g_spr_log_lines >= 600) return;
+    g_spr_log_lines++;
+    wclog_force("[Sprites] 看到精靈 %dx%d  長度 %u  key=%08lX  (shapeset=0x%08lX index=%d)  %s",
+                w, h, (unsigned)len, (unsigned long)key, (unsigned long)a[3], idx, g_spr_map.count(key) ? "在包裡" : "不在包裡");
+}
+
+extern "C" WC1CHT_USED
+int __cdecl wc1cht_hook4_impl(DWORD* arg_slot) WC1CHT_ASMLABEL(wc1cht_hook4_impl);
+
+extern "C" WC1CHT_USED
+int __cdecl wc1cht_hook4_impl(DWORD* arg_slot) {
+    try {
+        if (!g_spr_inited) spr_init();
+        if (!g_spr_on) return 0;
+        if (g_spr_logall) spr_log_all(arg_slot);
+        SprProbe pr;
+        int r = spr_try_replace(arg_slot, &pr);
+        if (g_spr_log && r) {
+            DWORD tag = pr.key ^ (r == 1 ? 0x5A5A5A5Au : 0xA5A5A5A5u);
+            if (g_spr_logged.insert(tag).second && g_spr_log_lines < 600) {
+                g_spr_log_lines++;
+                if (r == 1) wclog_force("[Sprites] 已替換  key=%08lX  原 %u 位元組 → 中文版", (unsigned long)pr.key, (unsigned)pr.len);
+                else        wclog_force("[Sprites] 標頭相符但雜湊不在包裡  key=%08lX  長度 %u（遊戲載入後的內容可能跟 GAMEDAT 原檔不同；把這行回報）", (unsigned long)pr.key, (unsigned)pr.len);
+            }
+        }
+    } catch (...) {
+        g_spr_on = false;
+    }
+    return 0;           // 一律交給原函式（命中時參數已被改成中文版）
+}
+
+extern "C" __declspec(dllexport)
+void __stdcall wc1cht_set_trampoline4(DWORD trampoline_addr) {
+    wc1cht_orig4_addr = trampoline_addr;
+    wclog("wc1cht_set_trampoline4: 收到 trampoline_addr=0x%08X，hook4（圖片替換）初始化完成", trampoline_addr);
+}
+
+
+
 #if defined(_MSC_VER)
 
 extern "C" __declspec(dllexport) __declspec(naked)
@@ -3427,6 +3876,21 @@ void hook_draw_bigtext(void) {
     passthru:
         pop  ebp
         jmp  dword ptr [wc1cht_orig3_addr]
+    }
+}
+
+// Hook4：精靈繪製核心。實作只會改參數，一律回原函式，所以不看回傳值
+extern "C" __declspec(dllexport) __declspec(naked)
+void hook_draw_sprite(void) {
+    __asm {
+        push ebp
+        mov  ebp, esp
+        lea  eax, [ebp + 8]
+        push eax
+        call wc1cht_hook4_impl
+        add  esp, 4
+        pop  ebp
+        jmp  dword ptr [wc1cht_orig4_addr]
     }
 }
 
@@ -3491,6 +3955,21 @@ void hook_draw_bigtext(void) {
     );
 }
 
+// Hook4：精靈繪製核心。實作只會改參數，一律回原函式，所以不看回傳值
+extern "C" __declspec(dllexport) __attribute__((naked))
+void hook_draw_sprite(void) {
+    __asm__ __volatile__(
+        "push %ebp\n\t"
+        "mov  %esp, %ebp\n\t"
+        "lea  8(%ebp), %eax\n\t"
+        "push %eax\n\t"
+        "call wc1cht_hook4_impl\n\t"
+        "add  $4, %esp\n\t"
+        "pop  %ebp\n\t"
+        "jmp  *wc1cht_orig4_addr\n\t"
+    );
+}
+
 #endif
 
 // ─────────────────────────────────────────────
@@ -3533,6 +4012,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID) {
             wclog("崩潰記錄器已安裝：遊戲發生存取違規等致命例外時，會把出事位址/暫存器/堆疊寫進這個 log");
         }
         apply_profile();           // 辨識 WC1 / SM1 / SM2，設定寫死位址並驗證（必須在 ini 解析與任何 hook 之前）
+        pump_start();              // [Pump] 限速器等待期間代處理視窗訊息（消除「沒有回應」）
         wccext_attach(hInst);      // 支線模組（debug 模式 / 降速），只建立執行緒
         wccprobe_attach(hInst);    // 實驗支線 v2：觀測器（ini [Probe] Enable=1 才會啟動）
         wccinterp_attach(hInst);   // 實驗支線 v3：內插原型（ini [Interp] Enable=1 才會啟動）

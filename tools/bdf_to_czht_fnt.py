@@ -219,10 +219,19 @@ def composite_glyph(glyph, ascent, n, dx=0, dy=0):
 
 
 def pack_canvas(canvas, n):
+    """Pack N-bit rows into ceil(N/8) bytes/row, MSB = leftmost pixel.
+
+    Each canvas row is an N-bit integer (bit N-1 = leftmost pixel). When N
+    is not a multiple of 8 (e.g. 19 -> 3 bytes = 24 bits), the row must be
+    LEFT-aligned inside the byte span, i.e. shifted left by the (8*bpr - N)
+    padding bits, otherwise the whole glyph is shifted right by that many
+    pixels. (For N = 8/16/24/... the shift is 0, which is why the old code
+    only looked correct for multiples of 8.)"""
     bpr = (n + 7) // 8
+    pad = bpr * 8 - n
     out = bytearray()
     for rowval in canvas:
-        out += rowval.to_bytes(bpr, "big")
+        out += (rowval << pad).to_bytes(bpr, "big")
     return bytes(out)
 
 
